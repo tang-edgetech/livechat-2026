@@ -1,0 +1,87 @@
+package handlers
+
+import (
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+	"golang.org/x/crypto/bcrypt"
+
+	"livechat/backend/internal/appstate"
+	"livechat/backend/internal/audit"
+)
+
+type updateProfileRequest struct {
+	DisplayName string `json:"displayName" binding:"required"`
+}
+
+// UpdateProfileHandler: any user, self-service display name (overview.md
+// §6.2).
+func UpdateProfileHandler(state *appstate.State) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		conn := state.DB()
+		userID := c.MustGet("user_id").(int64)
+
+		var req updateProfileRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request"})
+			return
+		}
+
+		if _, err := conn.Exec(`UPDATE user SET display_name = ? WHERE id = ?`, req.DisplayName, userID); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"ok": true})
+	}
+}
+
+type changePasswordRequest struct {
+	CurrentPassword string `json:"currentPassword" binding:"required"`
+	NewPassword     string `json:"newPassword" binding:"required"`
+}
+
+// ChangePasswordHandler: any user, self-service password change — requires
+// the current password, unlike ForcePasswordHandler which an Admin/Super
+// Admin uses on someone else's account (overview.md §6.2).
+func ChangePasswordHandler(state *appstate.State) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		conn := state.DB()
+		userID := c.MustGet("user_id").(int64)
+
+		var req changePasswordRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request"})
+			return
+		}
+		if len(req.NewPassword) < 10 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "password_too_short", "detail": "minimum 10 characters"})
+			return
+		}
+
+		var currentHash string
+		if err := conn.QueryRow(`SELECT password_hash FROM user WHERE id = ?`, userID).Scan(&currentHash); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
+			return
+		}
+		if bcrypt.CompareHashAndPassword([]byte(currentHash), []byte(req.CurrentPassword)) != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "current_password_incorrect"})
+			return
+		}
+
+		newHash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
+			return
+		}
+		if _, err := conn.Exec(`UPDATE user SET password_hash = ? WHERE id = ?`, string(newHash), userID); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
+			return
+		}
+
+		audit.Log(conn, audit.Entry{
+			UserID: &userID, Category: "auth", Message: "self-service password change",
+			StatusCode: 200, Source: "web", IPAddress: c.ClientIP(),
+		})
+		c.JSON(http.StatusOK, gin.H{"ok": true})
+	}
+}

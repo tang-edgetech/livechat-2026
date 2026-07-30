@@ -1,0 +1,7 @@
+.claude-telegram/
+node_modules/
+.env
+.env.local
+backend/uploads/
+frontend/.next/
+.scratch-test/

@@ -23,11 +23,16 @@ export class ApiError extends Error {
 // no polling: this is the single AJAX entry point every screen calls
 // (overview.md §2/§6.0).
 export async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
+  // FormData needs the browser to set its own Content-Type (with the
+  // multipart boundary) — forcing application/json here would break file
+  // uploads, so it's the one case that skips the default header.
+  const isFormData = typeof FormData !== "undefined" && options.body instanceof FormData;
+
   const res = await fetch(`${API_BASE_URL}${path}`, {
     ...options,
     credentials: "include",
     headers: {
-      "Content-Type": "application/json",
+      ...(isFormData ? {} : { "Content-Type": "application/json" }),
       ...(options.headers ?? {}),
     },
   });

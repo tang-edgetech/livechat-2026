@@ -408,6 +408,7 @@ Agents land directly on the Chat List (no dashboard).
 | Merchant management UI | **Dedicated "Merchants" Settings tab** — Super Admin creates/suspends Merchant records and grants the first Admin(s) access; an Admin edits their own held merchant(s)' operational config (routing, branding, timeout) from the same tab. See §6.10. |
 | Non-technical UX | **Design principle, applies everywhere**: assume Admin/Agent have zero IT background — plain language, guided builders/templates over raw config or JSON, no exposed jargon. Only the Setup Wizard (§5) and the raw side of Integration (§6.5) get to stay technical, since those users are inherently technical. See §6.0. |
 | Bot message richness | **Quick-reply/structured content supported** — `message` gained a `type = quick_reply` value and a `metadata` JSON column for button options; a visitor's click posts back as an ordinary text message so the flow engine's `ask_question` node doesn't need special-case handling. See §4 `message` and §6.4. |
+| Dashboard metric definitions | **Entries** = new chats started within the selected time range; **Records** = total known Visitor records, all-time; **Traffic** = total messages exchanged (Visitor+Agent+Bot) within the time range. See §9.1/§11 Phase 2. |
 
 ### 9.1 Remaining small design defaults (implementation detail, flag if you want it different)
 
@@ -459,6 +460,4 @@ Build in this order — each phase ends in something genuinely demoable/testable
 
 ## 12. Open Items — to discuss next
 
-- **Dashboard metric definitions ("Entries", "Records", "Traffic")** — proposed, awaiting confirmation: **Entries** = new chats started within the selected time range; **Records** = total known Visitor records, all-time; **Traffic** = total messages exchanged (Visitor+Agent+Bot) within the time range. Move to §9 once confirmed or corrected.
-
-Otherwise nothing outstanding right now — everything else raised so far has either been decided (§9) or built out into its own section (§10). Add new items here as they come up, and keep this the last section in the document (see the file's own resuming note at the top).
+Nothing outstanding right now — everything else raised so far has either been decided (§9) or built out into its own section (§10). Add new items here as they come up, and keep this the last section in the document (see the file's own resuming note at the top).

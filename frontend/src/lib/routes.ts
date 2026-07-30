@@ -7,11 +7,13 @@ const EXACT_PARENT: Record<string, string> = {
   "/dashboard": "/dashboard",
   "/profile": "/dashboard",
   "/settings": "/dashboard",
+  "/chats": "/chats",
 };
 
 const PREFIX_PARENT: [string, string][] = [
   ["/settings/users/", "/settings"],
   ["/settings/merchants/", "/settings"],
+  ["/chats/", "/chats"],
 ];
 
 export function getParentRoute(pathname: string): string {

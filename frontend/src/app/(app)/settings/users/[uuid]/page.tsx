@@ -109,7 +109,7 @@ export default function EditUserPage() {
     <div className="flex flex-col gap-6">
       <Card title="Account">
         <Descriptions column={1} bordered size="small">
-          <Descriptions.Item label="Display name">{target.display_name}</Descriptions.Item>
+          <Descriptions.Item label="Display Name">{target.display_name}</Descriptions.Item>
           <Descriptions.Item label="Username">{target.username}</Descriptions.Item>
           <Descriptions.Item label="Email">{target.email}</Descriptions.Item>
           <Descriptions.Item label="Role">

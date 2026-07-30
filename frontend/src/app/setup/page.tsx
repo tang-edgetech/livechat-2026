@@ -7,9 +7,9 @@ import {
   Card,
   Descriptions,
   Input,
-  List,
   Result,
   Space,
+  Spin,
   Steps,
   Tag,
   Typography,
@@ -170,12 +170,12 @@ export default function SetupWizardPage() {
 
         {step === 0 && (
           <Space orientation="vertical" style={{ width: "100%" }}>
-            <List
-              loading={checking}
-              dataSource={checks ?? []}
-              renderItem={(c) => (
-                <List.Item>
-                  <Space>
+            {checking && checks === null ? (
+              <Spin />
+            ) : (
+              <div className="flex flex-col gap-2">
+                {(checks ?? []).map((c) => (
+                  <div key={c.name} className="flex items-center gap-2 border-b border-black/5 py-2 last:border-0 dark:border-white/10">
                     {c.pass ? (
                       <CheckCircleFilled style={{ color: "#52c41a" }} />
                     ) : (
@@ -183,10 +183,10 @@ export default function SetupWizardPage() {
                     )}
                     <span>{c.name}</span>
                     <Tag>{c.note}</Tag>
-                  </Space>
-                </List.Item>
-              )}
-            />
+                  </div>
+                ))}
+              </div>
+            )}
             <Button onClick={runChecklist} loading={checking}>
               Re-check
             </Button>
@@ -194,7 +194,7 @@ export default function SetupWizardPage() {
               <Alert
                 type="warning"
                 showIcon
-                message="Fix the failing items above before continuing (Redis is optional)."
+                title="Fix the failing items above before continuing (Redis is optional)."
               />
             )}
             <Button type="primary" disabled={checklistBlocked} onClick={() => setStep(1)}>
@@ -318,7 +318,7 @@ export default function SetupWizardPage() {
                 {admin.username} ({admin.email})
               </Descriptions.Item>
             </Descriptions>
-            {finishError && <Alert type="error" showIcon message={finishError} />}
+            {finishError && <Alert type="error" showIcon title={finishError} />}
             <Space>
               <Button onClick={() => setStep(3)}>Back</Button>
               <Button type="primary" loading={finishing} onClick={handleFinish}>

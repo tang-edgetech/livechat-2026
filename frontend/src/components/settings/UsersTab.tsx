@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Button, Table, Tag } from "antd";
-import { PlusOutlined } from "@ant-design/icons";
+import { Button, Table, Tag, Tooltip } from "antd";
+import { EditOutlined, PlusOutlined } from "@ant-design/icons";
 import { useRouter } from "next/navigation";
 
 import { apiGet } from "@/lib/api";
@@ -36,10 +36,8 @@ export function UsersTab() {
         rowKey="uuid"
         loading={loading}
         dataSource={users}
-        onRow={(record) => ({ onClick: () => router.push(`/settings/users/${record.uuid}`) })}
-        rowClassName="cursor-pointer"
         columns={[
-          { title: "Display name", dataIndex: "display_name" },
+          { title: "Display Name", dataIndex: "display_name" },
           { title: "Username", dataIndex: "username" },
           { title: "Email", dataIndex: "email" },
           { title: "Role", dataIndex: "role", render: (r: StaffUser["role"]) => <Tag>{r}</Tag> },
@@ -47,6 +45,19 @@ export function UsersTab() {
             title: "Status",
             dataIndex: "status",
             render: (s: StaffUser["status"]) => <Tag color={STATUS_COLOR[s]}>{s}</Tag>,
+          },
+          {
+            title: "Actions",
+            key: "actions",
+            render: (_, record) => (
+              <Tooltip title="Edit">
+                <Button
+                  type="text"
+                  icon={<EditOutlined />}
+                  onClick={() => router.push(`/settings/users/${record.uuid}`)}
+                />
+              </Tooltip>
+            ),
           },
         ]}
       />

@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 
-import { apiGet, ApiError } from "@/lib/api";
+import { apiGet, apiPost, ApiError } from "@/lib/api";
 
 export type CurrentUser = {
   uuid: string;
@@ -17,6 +17,7 @@ type AuthContextValue = {
   refresh: () => Promise<void>;
   setUser: (user: CurrentUser | null) => void;
   acknowledgeSessionExpired: () => void;
+  logout: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -62,9 +63,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setSessionExpired(false);
   }, []);
 
+  // A deliberate logout must reset `hadUser` before the next heartbeat
+  // tick, otherwise that tick's 401 (session already gone) gets
+  // misread as an idle timeout and pops the "Session expired" modal
+  // right after the user just chose to log out themselves.
+  const logout = useCallback(async () => {
+    try {
+      await apiPost("/api/auth/logout");
+    } finally {
+      hadUser.current = false;
+      setSessionExpired(false);
+      setUser(null);
+    }
+  }, []);
+
   return (
     <AuthContext.Provider
-      value={{ user, loading, sessionExpired, refresh, setUser, acknowledgeSessionExpired }}
+      value={{ user, loading, sessionExpired, refresh, setUser, acknowledgeSessionExpired, logout }}
     >
       {children}
     </AuthContext.Provider>

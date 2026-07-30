@@ -11,13 +11,12 @@ import { Menu } from "antd";
 import { useRouter, usePathname } from "next/navigation";
 
 import { useAuth } from "@/context/AuthContext";
-import { apiPost } from "@/lib/api";
 import { confirmAction } from "@/components/modals/confirm";
 
 // Sticky top-left sidebar, logo at top, nav flex-1 + scrollable with a
 // thin custom scrollbar, Logout pinned to the bottom (overview.md §6.0).
 export function Sidebar() {
-  const { user, setUser } = useAuth();
+  const { user, logout } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
 
@@ -37,8 +36,7 @@ export function Sidebar() {
       okText: "Log out",
       danger: true,
       onConfirm: async () => {
-        await apiPost("/api/auth/logout");
-        setUser(null);
+        await logout();
         router.push("/login");
       },
     });

@@ -5,6 +5,7 @@ import { Card, Tabs, Typography } from "antd";
 import { useAuth } from "@/context/AuthContext";
 import { UsersTab } from "@/components/settings/UsersTab";
 import { MerchantsTab } from "@/components/settings/MerchantsTab";
+import { VisitorsTab } from "@/components/settings/VisitorsTab";
 
 function ComingSoon({ phase }: { phase: string }) {
   return (
@@ -29,6 +30,7 @@ export default function SettingsPage() {
             ? [
                 { key: "users", label: "Users", children: <UsersTab /> },
                 { key: "merchants", label: "Merchants", children: <MerchantsTab /> },
+                { key: "visitors", label: "Visitors", children: <VisitorsTab /> },
               ]
             : []),
           ...(isStaff

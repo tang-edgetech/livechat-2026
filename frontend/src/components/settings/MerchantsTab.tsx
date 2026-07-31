@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Button, Table, Tag, Tooltip, message } from "antd";
-import { PauseCircleOutlined, PlayCircleOutlined, PlusOutlined } from "@ant-design/icons";
+import { Button, Space, Table, Tag, Tooltip, message } from "antd";
+import { EditOutlined, PauseCircleOutlined, PlayCircleOutlined, PlusOutlined } from "@ant-design/icons";
 import { useRouter } from "next/navigation";
 
 import { apiGet, apiPatch } from "@/lib/api";
@@ -62,23 +62,30 @@ export function MerchantsTab() {
             dataIndex: "status",
             render: (s: Merchant["status"]) => <Tag color={s === "active" ? "success" : "error"}>{s}</Tag>,
           },
-          ...(user?.role === "super_admin"
-            ? [
-                {
-                  title: "Actions",
-                  key: "actions",
-                  render: (_: unknown, record: Merchant) => (
-                    <Tooltip title={record.status === "active" ? "Suspend" : "Activate"}>
-                      <Button
-                        type="text"
-                        icon={record.status === "active" ? <PauseCircleOutlined /> : <PlayCircleOutlined />}
-                        onClick={() => toggleStatus(record)}
-                      />
-                    </Tooltip>
-                  ),
-                },
-              ]
-            : []),
+          {
+            title: "Actions",
+            key: "actions",
+            render: (_: unknown, record: Merchant) => (
+              <Space>
+                <Tooltip title="Edit">
+                  <Button
+                    type="text"
+                    icon={<EditOutlined />}
+                    onClick={() => router.push(`/settings/merchants/${record.uuid}`)}
+                  />
+                </Tooltip>
+                {user?.role === "super_admin" && (
+                  <Tooltip title={record.status === "active" ? "Suspend" : "Activate"}>
+                    <Button
+                      type="text"
+                      icon={record.status === "active" ? <PauseCircleOutlined /> : <PlayCircleOutlined />}
+                      onClick={() => toggleStatus(record)}
+                    />
+                  </Tooltip>
+                )}
+              </Space>
+            ),
+          },
         ]}
       />
     </div>

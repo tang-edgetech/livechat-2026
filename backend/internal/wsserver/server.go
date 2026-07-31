@@ -181,4 +181,3 @@ func validateVisitorChat(conn *sql.DB, visitorUUID, chatUUID string) (int64, err
 	).Scan(&visitorID)
 	return visitorID, err
 }
-

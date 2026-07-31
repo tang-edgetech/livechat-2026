@@ -10,6 +10,8 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"livechat/backend/internal/appstate"
+	"livechat/backend/internal/passthrough"
+	"livechat/backend/internal/ratelimit"
 	"livechat/backend/internal/routing"
 	"livechat/backend/internal/storage"
 	"livechat/backend/internal/visitor"
@@ -17,20 +19,42 @@ import (
 )
 
 // This file is the visitor side of the chat — unauthenticated by design,
-// the same way a real anonymous website visitor would be. For Phase 2 it
-// doubles as the internal test harness overview.md §11 calls for
-// ("fed by an internal test harness for now"): StartChatHandler takes the
-// place of the real pre-chat form until Phase 3 builds the actual widget
-// around this exact same identity-resolution + chat-creation path.
+// the same way a real anonymous website visitor would be. It's also the
+// widget's actual backend now (Phase 3): the pre-chat form and the
+// logged-in passthrough flow (§10.2/§10.3) both funnel through
+// StartChatHandler, which used to double as the Phase 2 test harness.
 
-type startChatRequest struct {
-	MerchantCode string `json:"merchantCode" binding:"required"`
-	Phone        string `json:"phone" binding:"required"`
-	Email        string `json:"email"`
-	DisplayName  string `json:"displayName"`
+// GetPublicMerchantHandler exposes only what the widget needs to render
+// itself before a chat exists — branding, never anything internal.
+// Unauthenticated by design, same as the rest of this file.
+func GetPublicMerchantHandler(state *appstate.State) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		conn := state.DB()
+		var name, status string
+		var widgetConfig sql.NullString
+		if err := conn.QueryRow(
+			`SELECT name, status, widget_config FROM merchant WHERE code = ?`, c.Param("code"),
+		).Scan(&name, &status, &widgetConfig); err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+			return
+		}
+		if status != "active" {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"name": name, "widgetConfig": widgetConfig.String})
+	}
 }
 
-func StartChatHandler(state *appstate.State, hub *ws.Hub, redisClient *redis.Client) gin.HandlerFunc {
+type startChatRequest struct {
+	MerchantCode     string `json:"merchantCode" binding:"required"`
+	Phone            string `json:"phone"`
+	Email            string `json:"email"`
+	DisplayName      string `json:"displayName"`
+	PassthroughToken string `json:"passthroughToken"`
+}
+
+func StartChatHandler(state *appstate.State, hub *ws.Hub, redisClient *redis.Client, limiter *ratelimit.Limiter) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		conn := state.DB()
 
@@ -51,7 +75,32 @@ func StartChatHandler(state *appstate.State, hub *ws.Hub, redisClient *redis.Cli
 			return
 		}
 
-		v, err := visitor.Resolve(conn, merchantID, req.Phone, req.Email, req.DisplayName, c.ClientIP())
+		phone, email, displayName := req.Phone, req.Email, req.DisplayName
+		if req.PassthroughToken != "" {
+			// Logged-in visitor (§10.2) — never trust the payload until
+			// its HMAC verifies against this merchant's own secret.
+			identity, err := passthrough.Verify(conn, merchantID, req.PassthroughToken)
+			if err != nil {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_passthrough_token"})
+				return
+			}
+			phone, email, displayName = identity.Phone, identity.Email, identity.Name
+		}
+		if phone == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "phone_required"})
+			return
+		}
+
+		if !limiter.Allow("chat-start:" + c.ClientIP()) {
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": "rate_limited"})
+			return
+		}
+		if !limiter.Allow("chat-start:" + phone) {
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": "rate_limited"})
+			return
+		}
+
+		v, err := visitor.Resolve(conn, merchantID, phone, email, displayName, c.ClientIP())
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error", "detail": err.Error()})
 			return
@@ -133,7 +182,7 @@ func GetVisitorChatHandler(state *appstate.State) gin.HandlerFunc {
 	}
 }
 
-func SendVisitorMessageHandler(state *appstate.State, hub *ws.Hub) gin.HandlerFunc {
+func SendVisitorMessageHandler(state *appstate.State, hub *ws.Hub, limiter *ratelimit.Limiter) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		conn := state.DB()
 
@@ -150,6 +199,10 @@ func SendVisitorMessageHandler(state *appstate.State, hub *ws.Hub) gin.HandlerFu
 		}
 		if ref.Status == "closed" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "chat_closed"})
+			return
+		}
+		if !limiter.Allow("message-send:" + c.ClientIP()) {
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": "rate_limited"})
 			return
 		}
 
@@ -202,4 +255,3 @@ func UploadVisitorFileHandler(state *appstate.State, hub *ws.Hub, driver storage
 		c.JSON(http.StatusOK, out)
 	}
 }
-

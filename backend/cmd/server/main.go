@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -11,7 +12,9 @@ import (
 	"livechat/backend/internal/config"
 	appdb "livechat/backend/internal/db"
 	"livechat/backend/internal/handlers"
+	"livechat/backend/internal/inactivity"
 	"livechat/backend/internal/middleware"
+	"livechat/backend/internal/ratelimit"
 	"livechat/backend/internal/redisclient"
 	"livechat/backend/internal/storage"
 	"livechat/backend/internal/ws"
@@ -78,6 +81,13 @@ func main() {
 	hub := ws.NewHub(context.Background(), redisClient)
 	wsserver.Start(cfg, state, hub, redisClient)
 	fileDriver := storage.NewLocalDriver(cfg.UploadsPath)
+	inactivity.StartSweeper(state, hub, time.Minute)
+
+	// overview.md §10.6 v1 baseline: 10 chat-starts/min per IP or phone,
+	// 30 messages/min per IP — generous enough for a real visitor,
+	// tight enough to blunt a naive script.
+	chatStartLimiter := ratelimit.New(time.Minute, 10)
+	messageLimiter := ratelimit.New(time.Minute, 30)
 
 	router := gin.Default()
 	router.Use(corsMiddleware(cfg.FrontendOrigin))
@@ -111,8 +121,11 @@ func main() {
 		merchants.Use(staffOnly)
 		merchants.GET("", handlers.ListMerchantsHandler(state))
 		merchants.POST("", middleware.RequireRole("super_admin"), handlers.CreateMerchantHandler(state))
+		merchants.GET("/:uuid", handlers.GetMerchantHandler(state))
+		merchants.PATCH("/:uuid", handlers.UpdateMerchantHandler(state))
 		merchants.PATCH("/:uuid/status", middleware.RequireRole("super_admin"), handlers.SetMerchantStatusHandler(state))
 		merchants.POST("/:uuid/admins", middleware.RequireRole("super_admin"), handlers.AssignMerchantAdminHandler(state))
+		merchants.POST("/:uuid/widget-identity", middleware.RequireRole("super_admin"), handlers.GenerateWidgetIdentityHandler(state))
 
 		users := authed.Group("/users")
 		users.Use(staffOnly)
@@ -137,16 +150,23 @@ func main() {
 		authed.GET("/dashboard/summary", handlers.DashboardSummaryHandler(state, redisClient))
 		authed.GET("/files/:uuid", handlers.DownloadFileHandler(state, fileDriver))
 
+		visitors := authed.Group("/visitors")
+		visitors.Use(staffOnly)
+		visitors.GET("", handlers.ListVisitorsHandler(state))
+		visitors.PATCH("/:uuid", handlers.UpdateVisitorHandler(state))
+		visitors.POST("/merge", handlers.MergeVisitorsHandler(state))
+
 		// Visitor-facing — unauthenticated by design (a real website
 		// visitor isn't logged in), validated via the (visitor, chat) uuid
-		// pair instead. Doubles as the Phase 2 internal test harness.
+		// pair instead. This is the actual widget backend now (Phase 3).
 		visitorChats := api.Group("/visitor")
 		visitorChats.Use(requireDB(state))
-		visitorChats.POST("/start", handlers.StartChatHandler(state, hub, redisClient))
+		visitorChats.POST("/start", handlers.StartChatHandler(state, hub, redisClient, chatStartLimiter))
 		visitorChats.GET("/chats/:uuid", handlers.GetVisitorChatHandler(state))
-		visitorChats.POST("/chats/:uuid/messages", handlers.SendVisitorMessageHandler(state, hub))
+		visitorChats.POST("/chats/:uuid/messages", handlers.SendVisitorMessageHandler(state, hub, messageLimiter))
 		visitorChats.POST("/chats/:uuid/files", handlers.UploadVisitorFileHandler(state, hub, fileDriver))
 		visitorChats.GET("/files/:uuid", handlers.DownloadVisitorFileHandler(state, fileDriver))
+		visitorChats.GET("/merchant/:code", handlers.GetPublicMerchantHandler(state))
 	}
 
 	log.Println("listening on :" + cfg.AppPort)

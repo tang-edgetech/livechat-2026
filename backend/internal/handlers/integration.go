@@ -11,22 +11,25 @@ import (
 
 	"livechat/backend/internal/appstate"
 	"livechat/backend/internal/audit"
+	"livechat/backend/internal/webhook"
 )
 
-// Webhook integrations back the Bot flow's "Connect to another system"
-// step (overview.md §6.4/§6.5) — the one place a real endpoint URL and
-// secret are unavoidable. Super Admin/dev team sets these up; the Admin
-// building a flow only ever picks one by name (ListIntegrationsHandler
-// deliberately omits the URL/secret from the response).
+// Webhook integrations serve two purposes on the same `type = 'webhook'`
+// row (overview.md §6.4/§6.5): the Bot flow's "Connect to another
+// system" step (a synchronous call, config.events left empty), and
+// outbound event notifications (config.events lists which platform
+// events — chat.created/message.received/chat.closed — this endpoint
+// wants pushed to it, delivered by internal/webhook.Dispatch). Super
+// Admin/dev team sets these up; the Admin building a flow only ever
+// picks one by name (ListIntegrationsHandler deliberately omits the
+// URL/secret from the response).
 
-type webhookConfig struct {
-	Name string `json:"name"`
-	URL  string `json:"url"`
-}
+type webhookConfig = webhook.Config
 
 type integrationOut struct {
-	ID   int64  `json:"id"`
-	Name string `json:"name"`
+	ID     int64    `json:"id"`
+	Name   string   `json:"name"`
+	Events []string `json:"events,omitempty"`
 }
 
 func ListIntegrationsHandler(state *appstate.State) gin.HandlerFunc {
@@ -65,18 +68,19 @@ func ListIntegrationsHandler(state *appstate.State) gin.HandlerFunc {
 			}
 			var cfg webhookConfig
 			json.Unmarshal([]byte(configRaw), &cfg)
-			out = append(out, integrationOut{ID: id, Name: cfg.Name})
+			out = append(out, integrationOut{ID: id, Name: cfg.Name, Events: cfg.Events})
 		}
 		c.JSON(http.StatusOK, gin.H{"integrations": out})
 	}
 }
 
 type createIntegrationRequest struct {
-	Name         string  `json:"name" binding:"required"`
-	URL          string  `json:"url" binding:"required"`
-	Secret       string  `json:"secret"`
-	IsGlobal     bool    `json:"isGlobal"`
-	MerchantUUID *string `json:"merchantUuid"`
+	Name         string   `json:"name" binding:"required"`
+	URL          string   `json:"url" binding:"required"`
+	Secret       string   `json:"secret"`
+	IsGlobal     bool     `json:"isGlobal"`
+	MerchantUUID *string  `json:"merchantUuid"`
+	Events       []string `json:"events"`
 }
 
 // CreateIntegrationHandler is Super Admin only — see the package comment.
@@ -111,7 +115,7 @@ func CreateIntegrationHandler(state *appstate.State) gin.HandlerFunc {
 			secret = hex.EncodeToString(secretBytes)
 		}
 
-		configBytes, _ := json.Marshal(webhookConfig{Name: req.Name, URL: req.URL})
+		configBytes, _ := json.Marshal(webhookConfig{Name: req.Name, URL: req.URL, Events: req.Events})
 		result, err := conn.Exec(
 			`INSERT INTO integration (type, config, secret_hash, is_global) VALUES ('webhook', ?, ?, ?)`,
 			string(configBytes), secret, req.IsGlobal,

@@ -228,6 +228,7 @@ type merchantDetailOut struct {
 	WidgetConfig             *string `json:"widget_config"`
 	InactivityTimeoutMinutes int     `json:"inactivity_timeout_minutes"`
 	HasWidgetIdentity        bool    `json:"has_widget_identity"`
+	HasAutoLogin             bool    `json:"has_auto_login"`
 }
 
 // GetMerchantHandler backs the branding/routing/timeout edit screen
@@ -267,6 +268,13 @@ func GetMerchantHandler(state *appstate.State) gin.HandlerFunc {
 			 WHERE im.merchant_id = ? AND i.type = 'widget_identity'`,
 			merchantID,
 		).Scan(&out.HasWidgetIdentity)
+
+		conn.QueryRow(
+			`SELECT COUNT(*) > 0 FROM integration_merchant im
+			 JOIN integration i ON i.id = im.integration_id
+			 WHERE im.merchant_id = ? AND i.type = 'auto_login'`,
+			merchantID,
+		).Scan(&out.HasAutoLogin)
 
 		c.JSON(http.StatusOK, out)
 	}
@@ -387,6 +395,65 @@ func GenerateWidgetIdentityHandler(state *appstate.State) gin.HandlerFunc {
 		audit.Log(conn, audit.Entry{
 			MerchantID: &merchantID, UserID: &userID, Category: "integration",
 			Message: "widget identity secret (re)generated", StatusCode: 200, Source: "web", IPAddress: c.ClientIP(),
+		})
+		c.JSON(http.StatusOK, gin.H{"secret": secret})
+	}
+}
+
+// GenerateAutoLoginHandler (Super Admin only, overview.md §6.5/§9): mints
+// the shared secret a B2B partner's own backend uses to HMAC-sign an
+// auto-login deep link (see internal/autologin) — same mint-and-replace
+// shape as GenerateWidgetIdentityHandler above, just a separate secret
+// since this one grants panel access rather than identifying a Visitor.
+func GenerateAutoLoginHandler(state *appstate.State) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		conn := state.DB()
+		userID := c.MustGet("user_id").(int64)
+		merchantUUID := c.Param("uuid")
+
+		var merchantID int64
+		if err := conn.QueryRow(`SELECT id FROM merchant WHERE uuid = ?`, merchantUUID).Scan(&merchantID); err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+			return
+		}
+
+		secretBytes := make([]byte, 32)
+		if _, err := rand.Read(secretBytes); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
+			return
+		}
+		secret := hex.EncodeToString(secretBytes)
+
+		tx, err := conn.Begin()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
+			return
+		}
+		defer tx.Rollback()
+
+		tx.Exec(
+			`DELETE i FROM integration i JOIN integration_merchant im ON im.integration_id = i.id
+			 WHERE im.merchant_id = ? AND i.type = 'auto_login'`,
+			merchantID,
+		)
+		result, err := tx.Exec(`INSERT INTO integration (type, secret_hash, is_global) VALUES ('auto_login', ?, FALSE)`, secret)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
+			return
+		}
+		integrationID, _ := result.LastInsertId()
+		if _, err := tx.Exec(`INSERT INTO integration_merchant (integration_id, merchant_id) VALUES (?, ?)`, integrationID, merchantID); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
+			return
+		}
+		if err := tx.Commit(); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
+			return
+		}
+
+		audit.Log(conn, audit.Entry{
+			MerchantID: &merchantID, UserID: &userID, Category: "integration",
+			Message: "auto-login secret (re)generated", StatusCode: 200, Source: "web", IPAddress: c.ClientIP(),
 		})
 		c.JSON(http.StatusOK, gin.H{"secret": secret})
 	}

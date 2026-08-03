@@ -19,6 +19,14 @@ export type CannedMessage = {
 export type WebhookIntegration = {
   id: number;
   name: string;
+  events?: string[];
+};
+
+export type ApiKey = {
+  id: number;
+  name: string;
+  merchant_name: string;
+  created_at: string;
 };
 
 export type BotFlow = {

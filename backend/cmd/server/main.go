@@ -128,6 +128,7 @@ func main() {
 		merchants.PATCH("/:uuid/status", middleware.RequireRole("super_admin"), handlers.SetMerchantStatusHandler(state))
 		merchants.POST("/:uuid/admins", middleware.RequireRole("super_admin"), handlers.AssignMerchantAdminHandler(state))
 		merchants.POST("/:uuid/widget-identity", middleware.RequireRole("super_admin"), handlers.GenerateWidgetIdentityHandler(state))
+		merchants.POST("/:uuid/auto-login", middleware.RequireRole("super_admin"), handlers.GenerateAutoLoginHandler(state))
 
 		users := authed.Group("/users")
 		users.Use(staffOnly)
@@ -177,6 +178,13 @@ func main() {
 		integrations.DELETE("/:id", middleware.RequireRole("super_admin"), handlers.DeleteIntegrationHandler(state))
 		integrations.POST("/:id/test", middleware.RequireRole("super_admin"), handlers.TestIntegrationHandler(state))
 
+		// REST API v1 credentials (overview.md §6.5) — Super Admin only,
+		// same sensitivity tier as the webhook integrations above.
+		apiKeys := authed.Group("/api-keys")
+		apiKeys.GET("", staffOnly, handlers.ListAPIKeysHandler(state))
+		apiKeys.POST("", middleware.RequireRole("super_admin"), handlers.CreateAPIKeyHandler(state))
+		apiKeys.DELETE("/:id", middleware.RequireRole("super_admin"), handlers.RevokeAPIKeyHandler(state))
+
 		botFlows := authed.Group("/bot-flows")
 		botFlows.Use(staffOnly)
 		botFlows.GET("", handlers.ListBotFlowsHandler(state))
@@ -209,6 +217,20 @@ func main() {
 		visitorChats.POST("/chats/:uuid/files", handlers.UploadVisitorFileHandler(state, hub, fileDriver))
 		visitorChats.GET("/files/:uuid", handlers.DownloadVisitorFileHandler(state, fileDriver))
 		visitorChats.GET("/merchant/:code", handlers.GetPublicMerchantHandler(state))
+
+		// B2B auto-login deep link (overview.md §6.5) — unauthenticated by
+		// design, same posture as the visitor group above: nothing is
+		// trusted until internal/autologin verifies the HMAC signature.
+		api.GET("/auto-login", requireDB(state), handlers.AutoLoginHandler(state, cfg))
+
+		// REST API v1 — inbound, server-to-server, Bearer api_key auth
+		// (overview.md §6.5/§9) instead of a session cookie or the
+		// visitor-uuid pairing the widget uses.
+		v1 := api.Group("/v1")
+		v1.Use(requireDB(state), middleware.RequireAPIKey(state))
+		v1.POST("/chats", handlers.CreateChatV1Handler(state, hub, redisClient, chatStartLimiter))
+		v1.GET("/chats/:uuid", handlers.GetChatV1Handler(state))
+		v1.POST("/chats/:uuid/messages", handlers.SendMessageV1Handler(state, hub, redisClient, messageLimiter))
 	}
 
 	log.Println("listening on :" + cfg.AppPort)

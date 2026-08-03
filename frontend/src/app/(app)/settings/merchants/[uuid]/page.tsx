@@ -21,6 +21,8 @@ export default function EditMerchantPage() {
   const [saving, setSaving] = useState(false);
   const [newSecret, setNewSecret] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
+  const [newAutoLoginSecret, setNewAutoLoginSecret] = useState<string | null>(null);
+  const [generatingAutoLogin, setGeneratingAutoLogin] = useState(false);
 
   function load() {
     apiGet<MerchantDetail>(`/api/merchants/${uuid}`).then((m) => {
@@ -77,6 +79,26 @@ export default function EditMerchantPage() {
           message.error(err instanceof ApiError ? err.message : "Could not generate secret");
         } finally {
           setGenerating(false);
+        }
+      },
+    });
+  }
+
+  function generateAutoLoginSecret() {
+    confirmAction({
+      title: "Generate a new auto-login secret?",
+      content: "Any existing secret for this merchant stops working immediately — the B2B partner's own backend will need the new one.",
+      okText: "Generate",
+      onConfirm: async () => {
+        setGeneratingAutoLogin(true);
+        try {
+          const res = await apiPost<{ secret: string }>(`/api/merchants/${uuid}/auto-login`);
+          setNewAutoLoginSecret(res.secret);
+          load();
+        } catch (err) {
+          message.error(err instanceof ApiError ? err.message : "Could not generate secret");
+        } finally {
+          setGeneratingAutoLogin(false);
         }
       },
     });
@@ -184,6 +206,30 @@ export default function EditMerchantPage() {
                 showIcon
                 title="Copy this now — it won't be shown again"
                 description={<Input.TextArea value={newSecret} readOnly rows={2} />}
+              />
+            )}
+          </Space>
+        </Card>
+      )}
+
+      {isSuperAdmin && (
+        <Card title="B2B auto-login (technical)">
+          <Typography.Paragraph type="secondary">
+            Lets a trusted partner system deep-link one of this merchant&apos;s own staff straight into the panel,
+            already signed in. Their own backend signs a short-lived token with this secret and sends their user to{" "}
+            <code>/api/auto-login?merchant={merchant.code}&amp;token=...</code>. Set up by your dev team.
+          </Typography.Paragraph>
+          <Space orientation="vertical" style={{ width: "100%" }}>
+            <Typography.Text>Status: {merchant.has_auto_login ? "configured" : "not configured"}</Typography.Text>
+            <Button loading={generatingAutoLogin} onClick={generateAutoLoginSecret}>
+              {merchant.has_auto_login ? "Regenerate secret" : "Generate secret"}
+            </Button>
+            {newAutoLoginSecret && (
+              <Alert
+                type="warning"
+                showIcon
+                message="Copy this now — it won't be shown again"
+                description={<Input.TextArea value={newAutoLoginSecret} readOnly rows={2} />}
               />
             )}
           </Space>

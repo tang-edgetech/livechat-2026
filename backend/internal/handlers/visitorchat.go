@@ -20,6 +20,7 @@ import (
 	"livechat/backend/internal/routing"
 	"livechat/backend/internal/storage"
 	"livechat/backend/internal/visitor"
+	"livechat/backend/internal/webhook"
 	"livechat/backend/internal/ws"
 )
 
@@ -155,6 +156,7 @@ func StartChatHandler(state *appstate.State, hub *ws.Hub, redisClient *redis.Cli
 		}
 
 		notifyChatUpdated(conn, hub, merchantID, chatUUID)
+		webhook.Dispatch(conn, merchantID, "chat.created", gin.H{"chatUuid": chatUUID, "visitorUuid": v.UUID, "status": status})
 
 		c.JSON(http.StatusOK, gin.H{
 			"chatUuid":    chatUUID,
@@ -294,6 +296,7 @@ func SendVisitorMessageHandler(state *appstate.State, hub *ws.Hub, redisClient *
 			hub.Publish(ws.AgentSubject(ref.AgentID.Int64), ws.Event{Type: "message", Data: out})
 		}
 		notifyChatUpdated(conn, hub, ref.MerchantID, c.Param("uuid"))
+		webhook.Dispatch(conn, ref.MerchantID, "message.received", out)
 
 		if ref.Status == "bot" {
 			// Best-effort: a bot-engine hiccup shouldn't fail the

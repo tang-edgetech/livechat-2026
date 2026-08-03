@@ -31,4 +31,5 @@ export type MerchantDetail = {
   widget_config: string | null;
   inactivity_timeout_minutes: number;
   has_widget_identity: boolean;
+  has_auto_login: boolean;
 };

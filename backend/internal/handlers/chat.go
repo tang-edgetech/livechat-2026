@@ -18,6 +18,7 @@ import (
 	"livechat/backend/internal/audit"
 	"livechat/backend/internal/settings"
 	"livechat/backend/internal/storage"
+	"livechat/backend/internal/webhook"
 	"livechat/backend/internal/ws"
 )
 
@@ -384,6 +385,7 @@ func CloseChatHandler(state *appstate.State, hub *ws.Hub) gin.HandlerFunc {
 		audit.Log(conn, audit.Entry{MerchantID: &ref.MerchantID, UserID: &userID, Category: "chat", Message: "chat closed", StatusCode: 200, Source: "web", IPAddress: c.ClientIP()})
 		hub.Publish(ws.VisitorSubject(ref.VisitorID), ws.Event{Type: "chat_closed", Data: gin.H{"chatUuid": c.Param("uuid")}})
 		notifyChatUpdated(conn, hub, ref.MerchantID, c.Param("uuid"))
+		webhook.Dispatch(conn, ref.MerchantID, "chat.closed", gin.H{"chatUuid": c.Param("uuid")})
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	}
 }

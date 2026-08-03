@@ -8,6 +8,7 @@ import { apiGet, apiPost } from "@/lib/api";
 import { useSocket } from "@/lib/socket";
 import { confirmAction } from "@/components/modals/confirm";
 import { STATUS_COLOR, type ChatSummary } from "@/lib/chatTypes";
+import { titleCase } from "@/lib/format";
 import type { Merchant } from "@/lib/types";
 
 const STATUS_DOT: Record<ChatSummary["status"], "success" | "warning" | "default" | "processing"> = {
@@ -101,7 +102,7 @@ export default function ChatsPage() {
               setPage(1);
               setStatus(v);
             }}
-            options={["active", "pending", "closed", "bot"].map((s) => ({ value: s, label: s }))}
+            options={["active", "pending", "closed", "bot"].map((s) => ({ value: s, label: titleCase(s) }))}
           />
           {merchants.length > 1 && (
             <Select
@@ -174,7 +175,7 @@ export default function ChatsPage() {
           {
             title: "Status",
             dataIndex: "status",
-            render: (s: ChatSummary["status"]) => <Tag color={STATUS_COLOR[s]}>{s}</Tag>,
+            render: (s: ChatSummary["status"]) => <Tag color={STATUS_COLOR[s]}>{titleCase(s)}</Tag>,
           },
         ]}
       />

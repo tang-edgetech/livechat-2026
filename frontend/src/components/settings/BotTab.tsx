@@ -58,7 +58,7 @@ export function BotTab() {
           {
             title: "Status",
             key: "status",
-            render: (_, r) => <Tag color={r.is_active ? "success" : "default"}>{r.is_active ? "active" : "inactive"}</Tag>,
+            render: (_, r) => <Tag color={r.is_active ? "success" : "default"}>{r.is_active ? "Active" : "Inactive"}</Tag>,
           },
           {
             title: "Scope",

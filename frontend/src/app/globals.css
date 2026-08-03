@@ -43,3 +43,25 @@ body {
     background: rgba(255, 255, 255, 0.2);
   }
 }
+
+/* antd's default border tokens are barely visible against a pure-white
+   background — nudge them slightly darker so Card/Table/Input borders
+   read as an actual line. Plain CSS (not a ConfigProvider theme token)
+   deliberately: overriding colorBorder via ConfigProvider makes antd warn
+   that the static message()/Modal.confirm() calls used everywhere in
+   this app (see confirmAction) can't consume it without a much larger
+   refactor to the hook-based App.useApp() API — not worth it for a
+   border tweak. !important because antd's own injected stylesheet's
+   position relative to this one isn't guaranteed. */
+.ant-card,
+.ant-table,
+.ant-table-container,
+.ant-table-cell,
+.ant-input,
+.ant-input-outlined,
+.ant-input-affix-wrapper,
+.ant-select-selector,
+.ant-picker,
+.ant-picker-outlined {
+  border-color: #c2c5cc !important;
+}

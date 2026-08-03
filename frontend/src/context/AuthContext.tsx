@@ -7,6 +7,7 @@ import { apiGet, apiPost, ApiError } from "@/lib/api";
 export type CurrentUser = {
   uuid: string;
   display_name: string;
+  email: string;
   role: "super_admin" | "admin" | "agent";
 };
 

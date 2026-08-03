@@ -57,6 +57,27 @@ export default function WidgetPage() {
     setSession(s);
   }
 
+  // Runtime theming (overview.md §6.5) — a host site can re-skin the
+  // widget live via postMessage instead of us redeploying anything.
+  // Trust nothing by default: a domain not in this merchant's own
+  // allowedOrigins list is silently ignored, same "never trust an
+  // unsigned/unlisted sender" posture as the passthrough token. Only
+  // accentColor is handled here — corner is the floating bubble/iframe's
+  // *position on the host page*, which this iframe's own content has no
+  // say over; embed.js's LiveChatWidget.setTheme handles that half by
+  // repositioning the DOM elements it already controls.
+  useEffect(() => {
+    function handleThemeMessage(event: MessageEvent) {
+      if (!config.allowedOrigins?.includes(event.origin)) return;
+      if (!event.data || event.data.type !== "livechat:theme") return;
+      const accentColor = event.data.payload?.accentColor as string | undefined;
+      if (!accentColor) return;
+      setConfig((prev) => ({ ...prev, accentColor }));
+    }
+    window.addEventListener("message", handleThemeMessage);
+    return () => window.removeEventListener("message", handleThemeMessage);
+  }, [config.allowedOrigins]);
+
   const accent = config.accentColor || "#1677ff";
 
   if (loading) {

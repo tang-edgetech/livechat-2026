@@ -9,6 +9,7 @@ import dayjs, { type Dayjs } from "dayjs";
 import { apiDelete, apiGet, ApiError } from "@/lib/api";
 import { confirmAction } from "@/components/modals/confirm";
 import { useAuth } from "@/context/AuthContext";
+import { titleCase } from "@/lib/format";
 import type { StaffUser } from "@/lib/types";
 
 type AuditLog = {
@@ -185,7 +186,7 @@ export function AuditLogsTab() {
           style={{ width: 160 }}
           value={category}
           onChange={setCategory}
-          options={CATEGORIES.map((c) => ({ value: c, label: c }))}
+          options={CATEGORIES.map((c) => ({ value: c, label: titleCase(c) }))}
         />
         <Select
           placeholder="User"
@@ -229,7 +230,7 @@ export function AuditLogsTab() {
         scroll={{ x: true }}
         columns={[
           { title: "Timestamp", dataIndex: "created_at", key: "created_at", sorter: true },
-          { title: "Category", dataIndex: "category", key: "category", sorter: true, render: (v: string) => <Tag>{v}</Tag> },
+          { title: "Category", dataIndex: "category", key: "category", sorter: true, render: (v: string) => <Tag>{titleCase(v)}</Tag> },
           { title: "User", dataIndex: "user_name", render: (v: string | null) => v ?? "—" },
           { title: "Merchant", dataIndex: "merchant_name", render: (v: string | null) => v ?? "—" },
           { title: "Message", dataIndex: "message", ellipsis: true },
@@ -240,7 +241,7 @@ export function AuditLogsTab() {
             sorter: true,
             render: (v: number) => <Tag color={statusColor(v)}>{v}</Tag>,
           },
-          { title: "Source", dataIndex: "source", key: "source", sorter: true },
+          { title: "Source", dataIndex: "source", key: "source", sorter: true, render: (v: string) => titleCase(v) },
           ...(canDelete
             ? [
                 {
@@ -271,7 +272,7 @@ export function AuditLogsTab() {
             <Typography.Text strong>Timestamp</Typography.Text>
             <Typography.Text>{viewing.created_at}</Typography.Text>
             <Typography.Text strong>Category</Typography.Text>
-            <Typography.Text>{viewing.category}</Typography.Text>
+            <Typography.Text>{titleCase(viewing.category)}</Typography.Text>
             <Typography.Text strong>User</Typography.Text>
             <Typography.Text>{viewing.user_name ?? "—"}</Typography.Text>
             <Typography.Text strong>Merchant</Typography.Text>
@@ -283,7 +284,7 @@ export function AuditLogsTab() {
               {viewing.status_code} {viewing.status_message ?? ""}
             </Typography.Text>
             <Typography.Text strong>Source</Typography.Text>
-            <Typography.Text>{viewing.source}</Typography.Text>
+            <Typography.Text>{titleCase(viewing.source)}</Typography.Text>
             <Typography.Text strong>IP Address</Typography.Text>
             <Typography.Text>{viewing.ip_address ?? "—"}</Typography.Text>
           </Space>

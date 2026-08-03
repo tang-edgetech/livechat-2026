@@ -9,6 +9,7 @@ import { apiFetch, apiGet, apiPost } from "@/lib/api";
 import { useSocket } from "@/lib/socket";
 import { confirmAction } from "@/components/modals/confirm";
 import { STATUS_COLOR, appendMessage, type ChatMessage, type ChatSummary } from "@/lib/chatTypes";
+import { titleCase } from "@/lib/format";
 import type { CannedMessage } from "@/lib/automationTypes";
 
 export default function ChatConversationPage() {
@@ -117,7 +118,7 @@ export default function ChatConversationPage() {
           <div>
             <Typography.Text strong>{chat.visitor_name}</Typography.Text>{" "}
             <span className="text-neutral-500">· {chat.merchant_name}</span>{" "}
-            <Tag color={STATUS_COLOR[chat.status]}>{chat.status}</Tag>
+            <Tag color={STATUS_COLOR[chat.status]}>{titleCase(chat.status)}</Tag>
           </div>
           <Space>
             {canClaim && (

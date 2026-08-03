@@ -2,10 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { Button, Card, Checkbox, Input, Select, Space, Table, Tag, TimePicker, Typography, message } from "antd";
-import { DeleteOutlined } from "@ant-design/icons";
+import { DeleteOutlined, EditOutlined } from "@ant-design/icons";
 import type { Dayjs } from "dayjs";
+import dayjs from "dayjs";
 
-import { apiDelete, apiGet, apiPost } from "@/lib/api";
+import { apiDelete, apiGet, apiPatch, apiPost, ApiError } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { confirmAction } from "@/components/modals/confirm";
 import type { AutomationRule, ConditionSet } from "@/lib/automationTypes";
@@ -22,6 +23,7 @@ export function AutomationTab() {
   const [merchants, setMerchants] = useState<Merchant[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
 
   const [name, setName] = useState("");
   const [usePageCondition, setUsePageCondition] = useState(false);
@@ -61,6 +63,50 @@ export function AutomationTab() {
     }
   }
 
+  function startCreate() {
+    setEditingId(null);
+    setName("");
+    setMessageText("");
+    setUsePageCondition(false);
+    setUseTimeCondition(false);
+    setPageContains("");
+    setTimeRange(null);
+    setIsGlobal(false);
+    setMerchantUuid(undefined);
+    setCreating(true);
+  }
+
+  function startEdit(rule: AutomationRule) {
+    setEditingId(rule.id);
+    setName(rule.name);
+    setMessageText(rule.message);
+    setIsGlobal(rule.is_global);
+    setMerchantUuid(rule.merchant_uuid ?? undefined);
+    setUsePageCondition(false);
+    setUseTimeCondition(false);
+    setPageContains("");
+    setTimeRange(null);
+    if (rule.condition) {
+      try {
+        const cs: ConditionSet = JSON.parse(rule.condition);
+        for (const r of cs.rules) {
+          if (r.field === "page_url") {
+            setUsePageCondition(true);
+            setPageContains(String(r.value));
+          }
+          if (r.field === "time_of_day") {
+            const [start, end] = r.value as string[];
+            setUseTimeCondition(true);
+            setTimeRange([dayjs(start, "HH:mm"), dayjs(end, "HH:mm")]);
+          }
+        }
+      } catch {
+        // ignore malformed stored condition
+      }
+    }
+    setCreating(true);
+  }
+
   async function submit() {
     if (!messageText.trim() || !name.trim()) {
       message.error("Please fill in the name and message.");
@@ -82,16 +128,23 @@ export function AutomationTab() {
 
     setSubmitting(true);
     try {
-      await apiPost("/api/automation-rules", {
+      const payload = {
         name,
         condition: rules.length ? JSON.stringify(condition) : "",
         message: messageText,
         isGlobal,
         isActive: true,
         merchantUuid: isGlobal ? undefined : merchantUuid,
-      });
-      message.success("Automation rule created");
+      };
+      if (editingId) {
+        await apiPatch(`/api/automation-rules/${editingId}`, payload);
+        message.success("Automation rule updated");
+      } else {
+        await apiPost("/api/automation-rules", payload);
+        message.success("Automation rule created");
+      }
       setCreating(false);
+      setEditingId(null);
       setName("");
       setMessageText("");
       setUsePageCondition(false);
@@ -99,8 +152,8 @@ export function AutomationTab() {
       setPageContains("");
       setTimeRange(null);
       load();
-    } catch {
-      message.error("Could not create rule");
+    } catch (err) {
+      message.error(err instanceof ApiError ? err.message : "Could not save rule");
     } finally {
       setSubmitting(false);
     }
@@ -128,12 +181,12 @@ export function AutomationTab() {
 
       {!creating ? (
         <div>
-          <Button type="primary" onClick={() => setCreating(true)}>
+          <Button type="primary" onClick={startCreate}>
             Create Automation Rule
           </Button>
         </div>
       ) : (
-        <Card title="New automation rule">
+        <Card title={editingId ? "Edit automation rule" : "New automation rule"}>
           <Space orientation="vertical" style={{ width: "100%", maxWidth: 480 }}>
             <Input placeholder="Rule name (for your reference)" value={name} onChange={(e) => setName(e.target.value)} />
 
@@ -205,7 +258,10 @@ export function AutomationTab() {
             title: "Actions",
             key: "actions",
             render: (_, r) => (
-              <Button type="text" danger icon={<DeleteOutlined />} onClick={() => remove(r.id)} />
+              <Space>
+                <Button type="text" icon={<EditOutlined />} onClick={() => startEdit(r)} />
+                <Button type="text" danger icon={<DeleteOutlined />} onClick={() => remove(r.id)} />
+              </Space>
             ),
           },
         ]}

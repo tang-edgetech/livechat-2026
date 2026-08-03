@@ -525,8 +525,11 @@ type fileRuleError struct{ msg string }
 
 func (e *fileRuleError) Error() string { return e.msg }
 
-func validateFileRules(conn *sql.DB, fh *multipart.FileHeader) error {
-	maxMBStr, err := settings.Get(conn, "file_max_size_mb")
+// validateFileRules checks the merchant's own override first (Super
+// Admin can exempt or tighten a specific merchant — overview.md §6.8),
+// falling back to the global default when no override is set.
+func validateFileRules(conn *sql.DB, merchantID int64, fh *multipart.FileHeader) error {
+	maxMBStr, _, err := settings.GetMerchant(conn, merchantID, "file_max_size_mb")
 	if err != nil {
 		maxMBStr = settings.Defaults["file_max_size_mb"]
 	}
@@ -534,7 +537,7 @@ func validateFileRules(conn *sql.DB, fh *multipart.FileHeader) error {
 		return &fileRuleError{fmt.Sprintf("file exceeds the %d MB limit", maxMB)}
 	}
 
-	allowedStr, err := settings.Get(conn, "file_allowed_extensions")
+	allowedStr, _, err := settings.GetMerchant(conn, merchantID, "file_allowed_extensions")
 	if err != nil {
 		allowedStr = settings.Defaults["file_allowed_extensions"]
 	}
@@ -559,7 +562,7 @@ func validateFileRules(conn *sql.DB, fh *multipart.FileHeader) error {
 // pointing at it — metadata carries what the UI needs to render an
 // attachment link without a second round trip.
 func storeChatFile(conn *sql.DB, driver storage.Driver, ref *chatRef, uploaderType string, uploaderID *int64, fh *multipart.FileHeader) (messageOut, error) {
-	if err := validateFileRules(conn, fh); err != nil {
+	if err := validateFileRules(conn, ref.MerchantID, fh); err != nil {
 		return messageOut{}, err
 	}
 

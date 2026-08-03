@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { Button, Card, Checkbox, Input, Select, Space, Table, Tag, Typography, message } from "antd";
-import { DeleteOutlined, PlusOutlined } from "@ant-design/icons";
+import { DeleteOutlined, EditOutlined, PlusOutlined } from "@ant-design/icons";
 
-import { apiDelete, apiGet, apiPost } from "@/lib/api";
+import { apiDelete, apiGet, apiPatch, apiPost, ApiError } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { confirmAction } from "@/components/modals/confirm";
 import type { CannedMessage } from "@/lib/automationTypes";
@@ -19,6 +19,7 @@ export function CannedMessagesTab() {
   const [merchants, setMerchants] = useState<Merchant[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [isGlobal, setIsGlobal] = useState(false);
@@ -41,6 +42,24 @@ export function CannedMessagesTab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  function startCreate() {
+    setEditingId(null);
+    setTitle("");
+    setBody("");
+    setIsGlobal(false);
+    setMerchantUuid(undefined);
+    setCreating(true);
+  }
+
+  function startEdit(item: CannedMessage) {
+    setEditingId(item.id);
+    setTitle(item.title);
+    setBody(item.body);
+    setIsGlobal(item.is_global);
+    setMerchantUuid(item.merchant_uuid ?? undefined);
+    setCreating(true);
+  }
+
   async function submit() {
     if (!title.trim() || !body.trim()) {
       message.error("Please fill in a title and message.");
@@ -52,14 +71,21 @@ export function CannedMessagesTab() {
     }
     setSubmitting(true);
     try {
-      await apiPost("/api/canned-messages", { title, body, isGlobal, merchantUuid: isGlobal ? undefined : merchantUuid });
-      message.success("Canned message created");
+      const payload = { title, body, isGlobal, merchantUuid: isGlobal ? undefined : merchantUuid };
+      if (editingId) {
+        await apiPatch(`/api/canned-messages/${editingId}`, payload);
+        message.success("Canned message updated");
+      } else {
+        await apiPost("/api/canned-messages", payload);
+        message.success("Canned message created");
+      }
       setCreating(false);
+      setEditingId(null);
       setTitle("");
       setBody("");
       load();
-    } catch {
-      message.error("Could not create canned message");
+    } catch (err) {
+      message.error(err instanceof ApiError ? err.message : "Could not save canned message");
     } finally {
       setSubmitting(false);
     }
@@ -87,12 +113,12 @@ export function CannedMessagesTab() {
         <>
           {!creating ? (
             <div>
-              <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreating(true)}>
+              <Button type="primary" icon={<PlusOutlined />} onClick={startCreate}>
                 Create Canned Message
               </Button>
             </div>
           ) : (
-            <Card title="New canned message">
+            <Card title={editingId ? "Edit canned message" : "New canned message"}>
               <Space orientation="vertical" style={{ width: "100%", maxWidth: 480 }}>
                 <Input placeholder="Title (e.g. Greeting)" value={title} onChange={(e) => setTitle(e.target.value)} />
                 <Input.TextArea rows={3} placeholder="Message text" value={body} onChange={(e) => setBody(e.target.value)} />
@@ -140,7 +166,10 @@ export function CannedMessagesTab() {
                   title: "Actions",
                   key: "actions",
                   render: (_: unknown, r: CannedMessage) => (
-                    <Button type="text" danger icon={<DeleteOutlined />} onClick={() => remove(r.id)} />
+                    <Space>
+                      <Button type="text" icon={<EditOutlined />} onClick={() => startEdit(r)} />
+                      <Button type="text" danger icon={<DeleteOutlined />} onClick={() => remove(r.id)} />
+                    </Space>
                   ),
                 },
               ]

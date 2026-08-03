@@ -20,6 +20,10 @@ export type WidgetConfig = {
   corner?: "bottom-left" | "bottom-right";
   logoFileUuid?: string;
   language?: string;
+  // Domains allowed to postMessage a runtime theme override into the
+  // widget iframe (overview.md §6.5) — also the same trust boundary a
+  // "page" iframe embed is expected to be hosted under.
+  allowedOrigins?: string[];
 };
 
 export type MerchantDetail = {

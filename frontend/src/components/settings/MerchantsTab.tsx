@@ -8,6 +8,7 @@ import { useRouter } from "next/navigation";
 import { apiGet, apiPatch } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { confirmAction } from "@/components/modals/confirm";
+import { titleCase } from "@/lib/format";
 import type { Merchant } from "@/lib/types";
 
 export function MerchantsTab() {
@@ -60,7 +61,7 @@ export function MerchantsTab() {
           {
             title: "Status",
             dataIndex: "status",
-            render: (s: Merchant["status"]) => <Tag color={s === "active" ? "success" : "error"}>{s}</Tag>,
+            render: (s: Merchant["status"]) => <Tag color={s === "active" ? "success" : "error"}>{titleCase(s)}</Tag>,
           },
           {
             title: "Actions",

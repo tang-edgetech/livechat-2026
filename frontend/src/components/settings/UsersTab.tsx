@@ -6,6 +6,7 @@ import { EditOutlined, PlusOutlined } from "@ant-design/icons";
 import { useRouter } from "next/navigation";
 
 import { apiGet } from "@/lib/api";
+import { titleCase } from "@/lib/format";
 import type { StaffUser } from "@/lib/types";
 
 const STATUS_COLOR: Record<StaffUser["status"], string> = {
@@ -40,11 +41,11 @@ export function UsersTab() {
           { title: "Display Name", dataIndex: "display_name" },
           { title: "Username", dataIndex: "username" },
           { title: "Email", dataIndex: "email" },
-          { title: "Role", dataIndex: "role", render: (r: StaffUser["role"]) => <Tag>{r}</Tag> },
+          { title: "Role", dataIndex: "role", render: (r: StaffUser["role"]) => <Tag>{titleCase(r)}</Tag> },
           {
             title: "Status",
             dataIndex: "status",
-            render: (s: StaffUser["status"]) => <Tag color={STATUS_COLOR[s]}>{s}</Tag>,
+            render: (s: StaffUser["status"]) => <Tag color={STATUS_COLOR[s]}>{titleCase(s)}</Tag>,
           },
           {
             title: "Actions",

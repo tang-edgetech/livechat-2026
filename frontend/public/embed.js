@@ -55,4 +55,26 @@
 
   document.body.appendChild(iframe);
   document.body.appendChild(bubble);
+
+  // Runtime theming API (overview.md §6.5) — lets the host page's own JS
+  // re-skin the widget without us redeploying anything. accentColor is
+  // forwarded into the iframe via postMessage (the widget page only
+  // accepts it if this page's origin is in that merchant's own
+  // allowedOrigins list, set on the merchant's Embed settings). corner is
+  // handled right here instead, since it's this bubble/iframe's position
+  // on the HOST page, not something the iframe's own content controls.
+  window.LiveChatWidget = {
+    setTheme: function (theme) {
+      theme = theme || {};
+      if (theme.accentColor) {
+        bubble.style.background = theme.accentColor;
+        iframe.contentWindow.postMessage({ type: "livechat:theme", payload: { accentColor: theme.accentColor } }, origin);
+      }
+      if (theme.corner === "bottom-left" || theme.corner === "bottom-right") {
+        var side = theme.corner === "bottom-left" ? "left:20px;right:auto;" : "right:20px;left:auto;";
+        bubble.style.cssText = bubble.style.cssText.replace(/(left|right):[^;]+;?/g, "") + side;
+        iframe.style.cssText = iframe.style.cssText.replace(/(left|right):[^;]+;?/g, "") + side;
+      }
+    },
+  };
 })();

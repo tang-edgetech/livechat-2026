@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Button, Card, Descriptions, Input, Select, Space, Tag, Typography, message } from "antd";
+import { Button, Card, Col, Descriptions, Input, Row, Segmented, Select, Space, Typography, message } from "antd";
 import { useParams } from "next/navigation";
 
 import { apiDelete, apiGet, apiPost, apiPatch, ApiError } from "@/lib/api";
 import { confirmAction } from "@/components/modals/confirm";
+import { titleCase } from "@/lib/format";
 import type { Merchant, StaffUser } from "@/lib/types";
 
 export default function EditUserPage() {
@@ -13,7 +14,6 @@ export default function EditUserPage() {
 
   const [target, setTarget] = useState<StaffUser | null>(null);
   const [merchants, setMerchants] = useState<Merchant[]>([]);
-  const [status, setStatus] = useState<StaffUser["status"]>("active");
   const [selectedMerchants, setSelectedMerchants] = useState<string[]>([]);
   const [newPassword, setNewPassword] = useState("");
   const [loading, setLoading] = useState(true);
@@ -21,29 +21,37 @@ export default function EditUserPage() {
   const [savingMerchants, setSavingMerchants] = useState(false);
   const [savingPassword, setSavingPassword] = useState(false);
 
-  useEffect(() => {
+  function load() {
     Promise.all([
       apiGet<{ users: StaffUser[] }>("/api/users"),
       apiGet<{ merchants: Merchant[] }>("/api/merchants"),
     ]).then(([usersRes, merchantsRes]) => {
       const found = usersRes.users.find((u) => u.uuid === uuid) ?? null;
       setTarget(found);
-      setStatus(found?.status ?? "active");
       setSelectedMerchants(found?.merchants.map((m) => m.uuid) ?? []);
       setMerchants(merchantsRes.merchants);
       setLoading(false);
     });
+  }
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uuid]);
 
-  function saveStatus() {
+  // Quick toggle — applies immediately on pick (with confirmation), no
+  // separate Select-then-Save step.
+  function changeStatus(status: StaffUser["status"]) {
+    if (!target || status === target.status) return;
     confirmAction({
       title: "Save changes?",
-      content: `Set status to "${status}".`,
+      content: `Set status to "${titleCase(status)}".`,
       onConfirm: async () => {
         setSavingStatus(true);
         try {
           await apiPatch(`/api/users/${uuid}/status`, { status });
           message.success("Status updated");
+          load();
         } catch {
           message.error("Could not update status");
         } finally {
@@ -106,61 +114,65 @@ export default function EditUserPage() {
   if (!target) return <Typography.Paragraph>User not found.</Typography.Paragraph>;
 
   return (
-    <div className="flex flex-col gap-6">
-      <Card title="Account">
-        <Descriptions column={1} bordered size="small">
-          <Descriptions.Item label="Display Name">{target.display_name}</Descriptions.Item>
-          <Descriptions.Item label="Username">{target.username}</Descriptions.Item>
-          <Descriptions.Item label="Email">{target.email}</Descriptions.Item>
-          <Descriptions.Item label="Role">
-            <Tag>{target.role}</Tag>
-          </Descriptions.Item>
-        </Descriptions>
-      </Card>
-
-      <Card title="Status">
-        <Space>
-          <Select
-            value={status}
-            style={{ width: 160 }}
-            onChange={setStatus}
-            options={["active", "inactive", "suspended"].map((s) => ({ value: s, label: s }))}
-          />
-          <Button type="primary" loading={savingStatus} onClick={saveStatus}>
-            Save
-          </Button>
-        </Space>
-      </Card>
-
-      {target.role !== "super_admin" && (
-        <Card title="Merchant access">
+    <Row gutter={24}>
+      <Col xs={24} lg={12}>
+        <Card title="Basic Information">
           <Space orientation="vertical" style={{ width: "100%" }}>
-            <Select
-              mode="multiple"
-              style={{ width: "100%" }}
-              value={selectedMerchants}
-              onChange={setSelectedMerchants}
-              options={merchants.map((m) => ({ value: m.uuid, label: m.name }))}
-            />
-            <Button type="primary" loading={savingMerchants} onClick={saveMerchants}>
-              Save
-            </Button>
+            <Descriptions column={1} bordered size="small">
+              <Descriptions.Item label="Display Name">{target.display_name}</Descriptions.Item>
+              <Descriptions.Item label="Username">{target.username}</Descriptions.Item>
+              <Descriptions.Item label="Email">{target.email}</Descriptions.Item>
+              <Descriptions.Item label="Role">{titleCase(target.role)}</Descriptions.Item>
+            </Descriptions>
+
+            <div>
+              <Typography.Text strong>Status</Typography.Text>
+              <div style={{ marginTop: 4 }}>
+                <Segmented
+                  disabled={savingStatus}
+                  value={target.status}
+                  onChange={(v) => changeStatus(v as StaffUser["status"])}
+                  options={(["active", "inactive", "suspended"] as const).map((s) => ({ value: s, label: titleCase(s) }))}
+                />
+              </div>
+            </div>
           </Space>
         </Card>
-      )}
+      </Col>
 
-      <Card title="Force password reset">
+      <Col xs={24} lg={12}>
         <Space orientation="vertical" style={{ width: "100%" }}>
-          <Input.Password
-            placeholder="New password (min 10 characters)"
-            value={newPassword}
-            onChange={(e) => setNewPassword(e.target.value)}
-          />
-          <Button danger loading={savingPassword} onClick={forcePassword}>
-            Reset password
-          </Button>
+          {target.role !== "super_admin" && (
+            <Card title="Merchant Access">
+              <Space orientation="vertical" style={{ width: "100%" }}>
+                <Select
+                  mode="multiple"
+                  style={{ width: "100%" }}
+                  value={selectedMerchants}
+                  onChange={setSelectedMerchants}
+                  options={merchants.map((m) => ({ value: m.uuid, label: m.name }))}
+                />
+                <Button type="primary" loading={savingMerchants} onClick={saveMerchants}>
+                  Save
+                </Button>
+              </Space>
+            </Card>
+          )}
+
+          <Card title="Force Password Reset">
+            <Space orientation="vertical" style={{ width: "100%" }}>
+              <Input.Password
+                placeholder="New password (min 10 characters)"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+              />
+              <Button danger loading={savingPassword} onClick={forcePassword}>
+                Reset Password
+              </Button>
+            </Space>
+          </Card>
         </Space>
-      </Card>
-    </div>
+      </Col>
+    </Row>
   );
 }

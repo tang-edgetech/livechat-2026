@@ -129,6 +129,8 @@ func main() {
 		merchants.POST("/:uuid/admins", middleware.RequireRole("super_admin"), handlers.AssignMerchantAdminHandler(state))
 		merchants.POST("/:uuid/widget-identity", middleware.RequireRole("super_admin"), handlers.GenerateWidgetIdentityHandler(state))
 		merchants.POST("/:uuid/auto-login", middleware.RequireRole("super_admin"), handlers.GenerateAutoLoginHandler(state))
+		merchants.GET("/:uuid/file-rules", handlers.GetFileRulesHandler(state))
+		merchants.PATCH("/:uuid/file-rules", middleware.RequireRole("super_admin"), handlers.UpdateFileRulesHandler(state))
 
 		users := authed.Group("/users")
 		users.Use(staffOnly)
@@ -151,7 +153,10 @@ func main() {
 		staffChats.POST("/:uuid/files", handlers.UploadFileHandler(state, hub, fileDriver))
 
 		authed.GET("/dashboard/summary", handlers.DashboardSummaryHandler(state, redisClient))
+		authed.GET("/files", staffOnly, handlers.ListFilesHandler(state))
 		authed.GET("/files/:uuid", handlers.DownloadFileHandler(state, fileDriver))
+		authed.PATCH("/files/:uuid", staffOnly, handlers.RenameFileHandler(state))
+		authed.DELETE("/files/:uuid", staffOnly, handlers.DeleteFileHandler(state, fileDriver))
 
 		visitors := authed.Group("/visitors")
 		visitors.Use(staffOnly)
@@ -163,6 +168,7 @@ func main() {
 		automationRules.Use(staffOnly)
 		automationRules.GET("", handlers.ListAutomationRulesHandler(state))
 		automationRules.POST("", handlers.CreateAutomationRuleHandler(state))
+		automationRules.PATCH("/:id", handlers.UpdateAutomationRuleHandler(state))
 		automationRules.DELETE("/:id", handlers.DeleteAutomationRuleHandler(state))
 
 		// Any staff role can read/use canned messages; only Admin/Super
@@ -170,6 +176,7 @@ func main() {
 		cannedMessages := authed.Group("/canned-messages")
 		cannedMessages.GET("", handlers.ListCannedMessagesHandler(state))
 		cannedMessages.POST("", staffOnly, handlers.CreateCannedMessageHandler(state))
+		cannedMessages.PATCH("/:id", staffOnly, handlers.UpdateCannedMessageHandler(state))
 		cannedMessages.DELETE("/:id", staffOnly, handlers.DeleteCannedMessageHandler(state))
 
 		integrations := authed.Group("/integrations")

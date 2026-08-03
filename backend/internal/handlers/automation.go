@@ -126,6 +126,55 @@ func CreateAutomationRuleHandler(state *appstate.State) gin.HandlerFunc {
 	}
 }
 
+// UpdateAutomationRuleHandler lets Admin/Super Admin edit an existing
+// rule in place instead of only create/delete.
+func UpdateAutomationRuleHandler(state *appstate.State) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		conn := state.DB()
+		role := c.MustGet("role").(string)
+		userID := c.MustGet("user_id").(int64)
+		id := c.Param("id")
+
+		var req saveAutomationRuleRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request"})
+			return
+		}
+		if req.IsGlobal && role != "super_admin" {
+			c.JSON(http.StatusForbidden, gin.H{"error": "only_super_admin_can_create_global_rules"})
+			return
+		}
+
+		var merchantID *int64
+		if req.MerchantUUID != nil && *req.MerchantUUID != "" {
+			mid, err := resolveMerchantInScope(conn, role, userID, *req.MerchantUUID)
+			if err != nil {
+				c.JSON(http.StatusForbidden, gin.H{"error": "merchant_not_in_scope"})
+				return
+			}
+			merchantID = &mid
+		} else if !req.IsGlobal {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "merchant_required_unless_global"})
+			return
+		}
+
+		if _, err := conn.Exec(
+			`UPDATE automation_rule SET name = ?, `+"`condition`"+` = ?, message = ?, is_global = ?, is_active = ? WHERE id = ?`,
+			req.Name, nullIfEmpty(req.Condition), req.Message, req.IsGlobal, req.IsActive, id,
+		); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error", "detail": err.Error()})
+			return
+		}
+		conn.Exec(`DELETE FROM automation_rule_merchant WHERE automation_rule_id = ?`, id)
+		if merchantID != nil {
+			conn.Exec(`INSERT INTO automation_rule_merchant (automation_rule_id, merchant_id) VALUES (?, ?)`, id, *merchantID)
+		}
+
+		audit.Log(conn, audit.Entry{MerchantID: merchantID, UserID: &userID, Category: "automation", Message: "automation rule updated: " + req.Name, StatusCode: 200, Source: "web", IPAddress: c.ClientIP()})
+		c.JSON(http.StatusOK, gin.H{"ok": true})
+	}
+}
+
 func DeleteAutomationRuleHandler(state *appstate.State) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		conn := state.DB()

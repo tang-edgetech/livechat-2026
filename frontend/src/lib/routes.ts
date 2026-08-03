@@ -11,9 +11,15 @@ const EXACT_PARENT: Record<string, string> = {
 };
 
 const PREFIX_PARENT: [string, string][] = [
-  ["/settings/users/", "/settings"],
-  ["/settings/merchants/", "/settings"],
-  ["/settings/bot-flows/", "/settings"],
+  ["/settings/users/", "/settings/users"],
+  ["/settings/merchants/", "/settings/merchants"],
+  ["/settings/bot-flows/", "/settings/bot"],
+  // Every standalone settings section (general/files/embed/system/
+  // canned-messages/automation/bot/users/merchants/visitors/integration/
+  // audit) backs out to the dashboard, not to /settings itself (which is
+  // just a redirect to the default section) — this catch-all must stay
+  // last so the more specific rules above win first.
+  ["/settings/", "/dashboard"],
   ["/chats/", "/chats"],
 ];
 

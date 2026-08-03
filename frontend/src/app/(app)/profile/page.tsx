@@ -1,11 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { Button, Card, Descriptions, Form, Input, Typography, message } from "antd";
+import { Button, Card, Col, Descriptions, Form, Input, Row, Typography, message } from "antd";
 
 import { useAuth } from "@/context/AuthContext";
 import { apiFetch, ApiError } from "@/lib/api";
 import { confirmAction } from "@/components/modals/confirm";
+import { titleCase } from "@/lib/format";
 
 export default function ProfilePage() {
   const { user, refresh } = useAuth();
@@ -16,15 +17,15 @@ export default function ProfilePage() {
   function saveDisplayName(values: { displayName: string }) {
     confirmAction({
       title: "Save changes?",
-      content: "Update your display name.",
+      content: "Update your full name.",
       onConfirm: async () => {
         setSavingName(true);
         try {
           await apiFetch("/api/profile", { method: "PATCH", body: JSON.stringify(values) });
           await refresh();
-          message.success("Display name updated");
+          message.success("Full name updated");
         } catch {
-          message.error("Could not update display name");
+          message.error("Could not update full name");
         } finally {
           setSavingName(false);
         }
@@ -61,50 +62,52 @@ export default function ProfilePage() {
   }
 
   return (
-    <div className="flex flex-col gap-6">
-      <Card title="Profile">
-        <Descriptions column={1} bordered size="small">
-          <Descriptions.Item label="Role">{user?.role}</Descriptions.Item>
-        </Descriptions>
-      </Card>
+    <Row gutter={24}>
+      <Col xs={24} lg={12}>
+        <Card title="Basic Information">
+          <Descriptions column={1} bordered size="small" style={{ marginBottom: 24 }}>
+            <Descriptions.Item label="Email Address">{user?.email}</Descriptions.Item>
+            <Descriptions.Item label="Role">{user ? titleCase(user.role) : ""}</Descriptions.Item>
+          </Descriptions>
 
-      <Card title="Display name">
-        <Form
-          form={nameForm}
-          layout="vertical"
-          initialValues={{ displayName: user?.display_name }}
-          onFinish={saveDisplayName}
-          disabled={savingName}
-          style={{ maxWidth: 360 }}
-        >
-          <Form.Item name="displayName" label="Display name" rules={[{ required: true }]}>
-            <Input />
-          </Form.Item>
-          <Button type="primary" htmlType="submit" loading={savingName}>
-            Save
-          </Button>
-        </Form>
-      </Card>
+          <Form
+            form={nameForm}
+            layout="vertical"
+            initialValues={{ displayName: user?.display_name }}
+            onFinish={saveDisplayName}
+            disabled={savingName}
+          >
+            <Form.Item name="displayName" label="Full Name" rules={[{ required: true }]}>
+              <Input />
+            </Form.Item>
+            <Button type="primary" htmlType="submit" loading={savingName}>
+              Save
+            </Button>
+          </Form>
+        </Card>
+      </Col>
 
-      <Card title="Change password">
-        <Form layout="vertical" onFinish={savePassword} disabled={savingPassword} style={{ maxWidth: 360 }}>
-          <Form.Item name="currentPassword" label="Current password" rules={[{ required: true }]}>
-            <Input.Password />
-          </Form.Item>
-          <Form.Item name="newPassword" label="New password" rules={[{ required: true }]}>
-            <Input.Password />
-          </Form.Item>
-          <Form.Item name="confirmNewPassword" label="Confirm new password" rules={[{ required: true }]}>
-            <Input.Password />
-          </Form.Item>
-          <Typography.Text type="secondary" style={{ display: "block", marginBottom: 16 }}>
-            Minimum 10 characters, no other rules.
-          </Typography.Text>
-          <Button type="primary" htmlType="submit" loading={savingPassword}>
-            Save
-          </Button>
-        </Form>
-      </Card>
-    </div>
+      <Col xs={24} lg={12}>
+        <Card title="Change Password">
+          <Form layout="vertical" onFinish={savePassword} disabled={savingPassword}>
+            <Form.Item name="currentPassword" label="Current password" rules={[{ required: true }]}>
+              <Input.Password />
+            </Form.Item>
+            <Form.Item name="newPassword" label="New password" rules={[{ required: true }]}>
+              <Input.Password />
+            </Form.Item>
+            <Form.Item name="confirmNewPassword" label="Confirm new password" rules={[{ required: true }]}>
+              <Input.Password />
+            </Form.Item>
+            <Typography.Text type="secondary" style={{ display: "block", marginBottom: 16 }}>
+              Minimum 10 characters, no other rules.
+            </Typography.Text>
+            <Button type="primary" htmlType="submit" loading={savingPassword}>
+              Save
+            </Button>
+          </Form>
+        </Card>
+      </Col>
+    </Row>
   );
 }

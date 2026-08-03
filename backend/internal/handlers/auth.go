@@ -100,12 +100,12 @@ func MeHandler(state *appstate.State) gin.HandlerFunc {
 		userID := c.MustGet("user_id").(int64)
 
 		var (
-			uuid, displayName, roleSlug string
+			uuid, displayName, email, roleSlug string
 		)
 		err := conn.QueryRow(
-			`SELECT u.uuid, u.display_name, r.slug FROM user u JOIN role r ON r.id = u.role_id WHERE u.id = ?`,
+			`SELECT u.uuid, u.display_name, u.email, r.slug FROM user u JOIN role r ON r.id = u.role_id WHERE u.id = ?`,
 			userID,
-		).Scan(&uuid, &displayName, &roleSlug)
+		).Scan(&uuid, &displayName, &email, &roleSlug)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
 			return
@@ -114,6 +114,7 @@ func MeHandler(state *appstate.State) gin.HandlerFunc {
 		c.JSON(http.StatusOK, gin.H{
 			"uuid":         uuid,
 			"display_name": displayName,
+			"email":        email,
 			"role":         roleSlug,
 		})
 	}

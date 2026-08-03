@@ -7,6 +7,7 @@ import { useParams } from "next/navigation";
 import { apiGet, apiPatch, apiPost, ApiError } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { confirmAction } from "@/components/modals/confirm";
+import { EmbedSection } from "@/components/settings/EmbedSection";
 import type { MerchantDetail, WidgetConfig } from "@/lib/types";
 
 export default function EditMerchantPage() {
@@ -106,8 +107,6 @@ export default function EditMerchantPage() {
 
   if (!merchant) return null;
 
-  const embedSnippet = `<script src="${typeof window !== "undefined" ? window.location.origin : ""}/embed.js" data-merchant-code="${merchant.code}" async></script>`;
-
   return (
     <div className="flex flex-col gap-6">
       <Card title="Merchant">
@@ -147,8 +146,8 @@ export default function EditMerchantPage() {
               value={config.corner || "bottom-right"}
               onChange={(v) => setConfig({ ...config, corner: v })}
               options={[
-                { value: "bottom-right", label: "Bottom right" },
-                { value: "bottom-left", label: "Bottom left" },
+                { value: "bottom-right", label: "Bottom Right" },
+                { value: "bottom-left", label: "Bottom Left" },
               ]}
             />
           </div>
@@ -181,10 +180,7 @@ export default function EditMerchantPage() {
       </Button>
 
       <Card title="Embed on your website">
-        <Typography.Paragraph type="secondary">
-          Paste this snippet into your site&apos;s HTML, just before the closing <code>&lt;/body&gt;</code> tag.
-        </Typography.Paragraph>
-        <Input.TextArea value={embedSnippet} readOnly rows={2} />
+        <EmbedSection code={merchant.code} config={config} onConfigChange={setConfig} />
       </Card>
 
       {isSuperAdmin && (

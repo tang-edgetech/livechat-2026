@@ -11,7 +11,10 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+
 	"livechat/backend/internal/appstate"
+	"livechat/backend/internal/lock"
 	"livechat/backend/internal/settings"
 	"livechat/backend/internal/storage"
 )
@@ -81,11 +84,18 @@ func cutoff(conn *sql.DB, key string) time.Time {
 }
 
 // StartScheduler runs the sweep once a day. It no-ops while the DB isn't
-// configured yet (pre-Setup-Wizard) rather than erroring.
-func StartScheduler(state *appstate.State, driver storage.Driver) {
+// configured yet (pre-Setup-Wizard) rather than erroring. redisClient may
+// be nil; the lock only matters once more than one Go instance is
+// running (overview.md §11 Phase 7) so they don't all purge the same
+// rows redundantly — harmless either way since every delete is
+// idempotent, just wasted work without it.
+func StartScheduler(state *appstate.State, driver storage.Driver, redisClient *redis.Client) {
 	ticker := time.NewTicker(24 * time.Hour)
 	go func() {
 		for range ticker.C {
+			if !lock.TryAcquire(redisClient, "retention-sweep", 23*time.Hour) {
+				continue
+			}
 			conn := state.DB()
 			if conn == nil {
 				continue

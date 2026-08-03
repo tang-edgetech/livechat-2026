@@ -10,15 +10,27 @@ import (
 	"log"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+
 	"livechat/backend/internal/appstate"
+	"livechat/backend/internal/lock"
+	"livechat/backend/internal/webhook"
 	"livechat/backend/internal/ws"
 )
 
-func StartSweeper(state *appstate.State, hub *ws.Hub, interval time.Duration) {
+// StartSweeper runs the sweep on a ticker. redisClient may be nil (no
+// Redis configured); the lock is purely an optimization for when more
+// than one Go instance is running (overview.md §11 Phase 7) so they
+// don't all close, publish, and webhook-notify the same stale chat —
+// every instance still sweeps correctly on its own if Redis is absent.
+func StartSweeper(state *appstate.State, hub *ws.Hub, redisClient *redis.Client, interval time.Duration) {
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for range ticker.C {
+			if !lock.TryAcquire(redisClient, "inactivity-sweep", interval-time.Second) {
+				continue
+			}
 			sweep(state, hub)
 		}
 	}()
@@ -68,5 +80,6 @@ func sweep(state *appstate.State, hub *ws.Hub) {
 		}
 		hub.Publish(ws.VisitorSubject(s.visitorID), ws.Event{Type: "chat_closed", Data: map[string]string{"chatUuid": s.uuid, "reason": "inactivity"}})
 		hub.Publish(ws.DashboardSubject(s.merchantID), ws.Event{Type: "chat_updated"})
+		webhook.Dispatch(conn, s.merchantID, "chat.closed", map[string]string{"chatUuid": s.uuid, "reason": "inactivity"})
 	}
 }

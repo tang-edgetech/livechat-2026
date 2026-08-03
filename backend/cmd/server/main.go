@@ -82,14 +82,14 @@ func main() {
 	hub := ws.NewHub(context.Background(), redisClient)
 	wsserver.Start(cfg, state, hub, redisClient)
 	fileDriver := storage.NewLocalDriver(cfg.UploadsPath)
-	inactivity.StartSweeper(state, hub, time.Minute)
-	retention.StartScheduler(state, fileDriver)
+	inactivity.StartSweeper(state, hub, redisClient, time.Minute)
+	retention.StartScheduler(state, fileDriver, redisClient)
 
 	// overview.md §10.6 v1 baseline: 10 chat-starts/min per IP or phone,
 	// 30 messages/min per IP — generous enough for a real visitor,
 	// tight enough to blunt a naive script.
-	chatStartLimiter := ratelimit.New(time.Minute, 10)
-	messageLimiter := ratelimit.New(time.Minute, 30)
+	chatStartLimiter := ratelimit.NewRedis(redisClient, time.Minute, 10)
+	messageLimiter := ratelimit.NewRedis(redisClient, time.Minute, 30)
 
 	router := gin.Default()
 	router.Use(corsMiddleware(cfg.FrontendOrigin))

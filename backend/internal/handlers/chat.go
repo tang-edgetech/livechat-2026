@@ -2,10 +2,13 @@ package handlers
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"mime/multipart"
 	"net/http"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -13,6 +16,7 @@ import (
 
 	"livechat/backend/internal/appstate"
 	"livechat/backend/internal/audit"
+	"livechat/backend/internal/settings"
 	"livechat/backend/internal/storage"
 	"livechat/backend/internal/ws"
 )
@@ -496,6 +500,11 @@ func UploadFileHandler(state *appstate.State, hub *ws.Hub, driver storage.Driver
 
 		out, err := storeChatFile(conn, driver, ref, "user", &userID, fh)
 		if err != nil {
+			var ruleErr *fileRuleError
+			if errors.As(err, &ruleErr) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "file_rejected", "detail": ruleErr.Error()})
+				return
+			}
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "upload_failed", "detail": err.Error()})
 			return
 		}
@@ -507,11 +516,51 @@ func UploadFileHandler(state *appstate.State, hub *ws.Hub, driver storage.Driver
 	}
 }
 
+// fileRuleError marks an upload rejected by the Files settings tab's
+// format/size rules (overview.md §6.8) — handlers use errors.As to
+// return 400 instead of the generic 500 upload_failed.
+type fileRuleError struct{ msg string }
+
+func (e *fileRuleError) Error() string { return e.msg }
+
+func validateFileRules(conn *sql.DB, fh *multipart.FileHeader) error {
+	maxMBStr, err := settings.Get(conn, "file_max_size_mb")
+	if err != nil {
+		maxMBStr = settings.Defaults["file_max_size_mb"]
+	}
+	if maxMB, _ := strconv.Atoi(maxMBStr); maxMB > 0 && fh.Size > int64(maxMB)*1024*1024 {
+		return &fileRuleError{fmt.Sprintf("file exceeds the %d MB limit", maxMB)}
+	}
+
+	allowedStr, err := settings.Get(conn, "file_allowed_extensions")
+	if err != nil {
+		allowedStr = settings.Defaults["file_allowed_extensions"]
+	}
+	if allowed := strings.TrimSpace(allowedStr); allowed != "" {
+		ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(fh.Filename), "."))
+		ok := false
+		for _, a := range strings.Split(allowed, ",") {
+			if strings.ToLower(strings.TrimSpace(a)) == ext {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			return &fileRuleError{fmt.Sprintf("file type .%s is not allowed", ext)}
+		}
+	}
+	return nil
+}
+
 // storeChatFile is shared by the staff and visitor upload handlers: save
 // to disk, insert the `file` row, then insert a `type=file` message
 // pointing at it — metadata carries what the UI needs to render an
 // attachment link without a second round trip.
 func storeChatFile(conn *sql.DB, driver storage.Driver, ref *chatRef, uploaderType string, uploaderID *int64, fh *multipart.FileHeader) (messageOut, error) {
+	if err := validateFileRules(conn, fh); err != nil {
+		return messageOut{}, err
+	}
+
 	src, err := fh.Open()
 	if err != nil {
 		return messageOut{}, err

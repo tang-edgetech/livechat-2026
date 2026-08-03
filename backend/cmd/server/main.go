@@ -16,6 +16,7 @@ import (
 	"livechat/backend/internal/middleware"
 	"livechat/backend/internal/ratelimit"
 	"livechat/backend/internal/redisclient"
+	"livechat/backend/internal/retention"
 	"livechat/backend/internal/storage"
 	"livechat/backend/internal/ws"
 	"livechat/backend/internal/wsserver"
@@ -82,6 +83,7 @@ func main() {
 	wsserver.Start(cfg, state, hub, redisClient)
 	fileDriver := storage.NewLocalDriver(cfg.UploadsPath)
 	inactivity.StartSweeper(state, hub, time.Minute)
+	retention.StartScheduler(state, fileDriver)
 
 	// overview.md §10.6 v1 baseline: 10 chat-starts/min per IP or phone,
 	// 30 messages/min per IP — generous enough for a real visitor,
@@ -181,6 +183,20 @@ func main() {
 		botFlows.POST("", handlers.CreateBotFlowHandler(state))
 		botFlows.PATCH("/:id", handlers.UpdateBotFlowHandler(state))
 		botFlows.DELETE("/:id", handlers.DeleteBotFlowHandler(state))
+
+		// Admin/Super Admin can view; delete is Super Admin only (overview.md §6.7).
+		auditLogs := authed.Group("/audit-logs")
+		auditLogs.Use(staffOnly)
+		auditLogs.GET("", handlers.ListAuditLogsHandler(state))
+		auditLogs.DELETE("/:id", middleware.RequireRole("super_admin"), handlers.DeleteAuditLogHandler(state))
+
+		// General/System/Files settings tabs (overview.md §9): anyone
+		// authed can view, only Super Admin can change values or trigger
+		// an out-of-cycle retention purge.
+		settingsGroup := authed.Group("/settings")
+		settingsGroup.GET("", handlers.GetSettingsHandler(state))
+		settingsGroup.PATCH("", middleware.RequireRole("super_admin"), handlers.UpdateSettingsHandler(state))
+		settingsGroup.POST("/purge-now", middleware.RequireRole("super_admin"), handlers.PurgeNowHandler(state, fileDriver))
 
 		// Visitor-facing — unauthenticated by design (a real website
 		// visitor isn't logged in), validated via the (visitor, chat) uuid

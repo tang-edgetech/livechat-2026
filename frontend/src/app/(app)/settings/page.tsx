@@ -1,6 +1,6 @@
 "use client";
 
-import { Card, Tabs, Typography } from "antd";
+import { Card, Tabs } from "antd";
 
 import { useAuth } from "@/context/AuthContext";
 import { UsersTab } from "@/components/settings/UsersTab";
@@ -10,12 +10,10 @@ import { AutomationTab } from "@/components/settings/AutomationTab";
 import { BotTab } from "@/components/settings/BotTab";
 import { IntegrationTab } from "@/components/settings/IntegrationTab";
 import { CannedMessagesTab } from "@/components/settings/CannedMessagesTab";
-
-function ComingSoon({ phase }: { phase: string }) {
-  return (
-    <Typography.Paragraph type="secondary">Built in {phase}.</Typography.Paragraph>
-  );
-}
+import { AuditLogsTab } from "@/components/settings/AuditLogsTab";
+import { GeneralTab } from "@/components/settings/GeneralTab";
+import { SystemTab } from "@/components/settings/SystemTab";
+import { FilesTab } from "@/components/settings/FilesTab";
 
 export default function SettingsPage() {
   const { user } = useAuth();
@@ -25,8 +23,7 @@ export default function SettingsPage() {
     <Card>
       <Tabs
         items={[
-          { key: "general", label: "General", children: <ComingSoon phase="Phase 5" /> },
-          { key: "system", label: "System", children: <ComingSoon phase="Phase 5" /> },
+          { key: "general", label: "General", children: <GeneralTab /> },
           { key: "canned-messages", label: "Canned Messages", children: <CannedMessagesTab /> },
           ...(isStaff
             ? [
@@ -36,10 +33,11 @@ export default function SettingsPage() {
                 { key: "users", label: "Users", children: <UsersTab /> },
                 { key: "merchants", label: "Merchants", children: <MerchantsTab /> },
                 { key: "visitors", label: "Visitors", children: <VisitorsTab /> },
-                { key: "audit", label: "Audit Logs", children: <ComingSoon phase="Phase 5" /> },
+                { key: "audit", label: "Audit Logs", children: <AuditLogsTab /> },
+                { key: "system", label: "System", children: <SystemTab /> },
               ]
             : []),
-          { key: "files", label: "Files", children: <ComingSoon phase="Phase 5" /> },
+          { key: "files", label: "Files", children: <FilesTab /> },
         ]}
       />
     </Card>

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
@@ -325,6 +326,11 @@ func UploadVisitorFileHandler(state *appstate.State, hub *ws.Hub, driver storage
 
 		out, err := storeChatFile(conn, driver, ref, "visitor", &ref.VisitorID, fh)
 		if err != nil {
+			var ruleErr *fileRuleError
+			if errors.As(err, &ruleErr) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "file_rejected", "detail": ruleErr.Error()})
+				return
+			}
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "upload_failed", "detail": err.Error()})
 			return
 		}

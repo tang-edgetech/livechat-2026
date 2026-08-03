@@ -1,14 +1,15 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Button, Card, Input, Space, Tag, Typography, Upload, message as antMessage } from "antd";
-import { PaperClipOutlined, SendOutlined } from "@ant-design/icons";
+import { Button, Card, Dropdown, Input, Space, Tag, Typography, Upload, message as antMessage } from "antd";
+import { MessageOutlined, PaperClipOutlined, SendOutlined } from "@ant-design/icons";
 import { useParams } from "next/navigation";
 
 import { apiFetch, apiGet, apiPost } from "@/lib/api";
 import { useSocket } from "@/lib/socket";
 import { confirmAction } from "@/components/modals/confirm";
-import { STATUS_COLOR, type ChatMessage, type ChatSummary } from "@/lib/chatTypes";
+import { STATUS_COLOR, appendMessage, type ChatMessage, type ChatSummary } from "@/lib/chatTypes";
+import type { CannedMessage } from "@/lib/automationTypes";
 
 export default function ChatConversationPage() {
   const { uuid } = useParams<{ uuid: string }>();
@@ -17,7 +18,12 @@ export default function ChatConversationPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  const [cannedMessages, setCannedMessages] = useState<CannedMessage[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    apiGet<{ cannedMessages: CannedMessage[] }>("/api/canned-messages").then((res) => setCannedMessages(res.cannedMessages));
+  }, []);
 
   function load() {
     apiGet<{ chat: ChatSummary; messages: ChatMessage[] }>(`/api/chats/${uuid}`).then((res) => {
@@ -39,7 +45,7 @@ export default function ChatConversationPage() {
     if (event.type === "message") {
       const m = event.data as ChatMessage;
       if (m.chat_uuid === uuid) {
-        setMessages((prev) => [...prev, m]);
+        setMessages((prev) => appendMessage(prev, m));
       }
     }
     if (event.type === "chat_closed" && (event.data as { chatUuid?: string })?.chatUuid === uuid) {
@@ -52,7 +58,7 @@ export default function ChatConversationPage() {
     setSending(true);
     try {
       const sent = await apiPost<ChatMessage>(`/api/chats/${uuid}/messages`, { body: draft });
-      setMessages((prev) => [...prev, sent]);
+      setMessages((prev) => appendMessage(prev, sent));
       setDraft("");
     } catch {
       antMessage.error("Could not send message");
@@ -88,7 +94,7 @@ export default function ChatConversationPage() {
     form.append("file", file);
     try {
       const sent = await apiFetch<ChatMessage>(`/api/chats/${uuid}/files`, { method: "POST", body: form });
-      setMessages((prev) => [...prev, sent]);
+      setMessages((prev) => appendMessage(prev, sent));
     } catch {
       antMessage.error("Upload failed");
     }
@@ -140,6 +146,18 @@ export default function ChatConversationPage() {
           <Upload beforeUpload={uploadFile} showUploadList={false} disabled={isClosed}>
             <Button icon={<PaperClipOutlined />} disabled={isClosed} />
           </Upload>
+          <Dropdown
+            disabled={isClosed || cannedMessages.length === 0}
+            menu={{
+              items: cannedMessages.map((cm) => ({ key: cm.id, label: cm.title })),
+              onClick: ({ key }) => {
+                const cm = cannedMessages.find((c) => String(c.id) === key);
+                if (cm) setDraft(cm.body);
+              },
+            }}
+          >
+            <Button icon={<MessageOutlined />} disabled={isClosed || cannedMessages.length === 0} />
+          </Dropdown>
           <Input
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
@@ -157,6 +175,17 @@ export default function ChatConversationPage() {
 }
 
 function MessageBubble({ message }: { message: ChatMessage }) {
+  if (message.sender_type === "system" || message.sender_type === "bot") {
+    return (
+      <div className="flex justify-center">
+        <div className="max-w-md rounded-lg bg-neutral-50 px-3 py-1 text-center text-xs text-neutral-500 dark:bg-neutral-800/50 dark:text-neutral-400">
+          {message.sender_type === "bot" ? "🤖 " : ""}
+          {message.type === "file" ? <FileAttachment message={message} /> : message.body}
+        </div>
+      </div>
+    );
+  }
+
   const isVisitor = message.sender_type === "visitor";
   return (
     <div className={`flex ${isVisitor ? "justify-start" : "justify-end"}`}>

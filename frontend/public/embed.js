@@ -31,7 +31,13 @@
 
   var iframe = document.createElement("iframe");
   var src = origin + "/widget/" + encodeURIComponent(merchantCode);
-  if (token) src += "?token=" + encodeURIComponent(token);
+  var params = [];
+  if (token) params.push("token=" + encodeURIComponent(token));
+  // The widget lives in an iframe, so window.location inside it is our
+  // own app, not the host site — pass the real page URL explicitly so
+  // Automation/Bot page-based conditions (overview.md §6.3) can see it.
+  params.push("parentUrl=" + encodeURIComponent(window.location.href));
+  if (params.length) src += "?" + params.join("&");
   iframe.src = src;
   iframe.style.cssText =
     "position:fixed;bottom:88px;" + sideStyle +

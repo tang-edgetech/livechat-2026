@@ -6,6 +6,10 @@ import { useAuth } from "@/context/AuthContext";
 import { UsersTab } from "@/components/settings/UsersTab";
 import { MerchantsTab } from "@/components/settings/MerchantsTab";
 import { VisitorsTab } from "@/components/settings/VisitorsTab";
+import { AutomationTab } from "@/components/settings/AutomationTab";
+import { BotTab } from "@/components/settings/BotTab";
+import { IntegrationTab } from "@/components/settings/IntegrationTab";
+import { CannedMessagesTab } from "@/components/settings/CannedMessagesTab";
 
 function ComingSoon({ phase }: { phase: string }) {
   return (
@@ -23,18 +27,17 @@ export default function SettingsPage() {
         items={[
           { key: "general", label: "General", children: <ComingSoon phase="Phase 5" /> },
           { key: "system", label: "System", children: <ComingSoon phase="Phase 5" /> },
-          { key: "automation", label: "Automation", children: <ComingSoon phase="Phase 4" /> },
-          { key: "bot", label: "Bot", children: <ComingSoon phase="Phase 4" /> },
-          { key: "integration", label: "Integration", children: <ComingSoon phase="Phase 6" /> },
+          { key: "canned-messages", label: "Canned Messages", children: <CannedMessagesTab /> },
           ...(isStaff
             ? [
+                { key: "automation", label: "Automation", children: <AutomationTab /> },
+                { key: "bot", label: "Bot", children: <BotTab /> },
+                { key: "integration", label: "Integration", children: <IntegrationTab /> },
                 { key: "users", label: "Users", children: <UsersTab /> },
                 { key: "merchants", label: "Merchants", children: <MerchantsTab /> },
                 { key: "visitors", label: "Visitors", children: <VisitorsTab /> },
+                { key: "audit", label: "Audit Logs", children: <ComingSoon phase="Phase 5" /> },
               ]
-            : []),
-          ...(isStaff
-            ? [{ key: "audit", label: "Audit Logs", children: <ComingSoon phase="Phase 5" /> }]
             : []),
           { key: "files", label: "Files", children: <ComingSoon phase="Phase 5" /> },
         ]}

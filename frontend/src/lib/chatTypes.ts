@@ -28,3 +28,16 @@ export const STATUS_COLOR: Record<ChatSummary["status"], string> = {
   closed: "default",
   bot: "processing",
 };
+
+// Messages arrive from two independent channels — the sender's own POST
+// response (optimistic append) and the WebSocket push to everyone else —
+// with no ordering guarantee between them. That's most visible right
+// after a bot flow's ask_question: the engine can publish the *next*
+// bot message over WS before the visitor's own POST response for their
+// answer has resolved, so a plain append can land it out of order. Sort
+// by id (a real DB insertion order) and dedupe every time, rather than
+// trusting arrival order.
+export function appendMessage(prev: ChatMessage[], next: ChatMessage): ChatMessage[] {
+  if (prev.some((m) => m.id === next.id)) return prev;
+  return [...prev, next].sort((a, b) => a.id - b.id);
+}

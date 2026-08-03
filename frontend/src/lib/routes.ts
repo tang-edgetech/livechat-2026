@@ -13,6 +13,7 @@ const EXACT_PARENT: Record<string, string> = {
 const PREFIX_PARENT: [string, string][] = [
   ["/settings/users/", "/settings"],
   ["/settings/merchants/", "/settings"],
+  ["/settings/bot-flows/", "/settings"],
   ["/chats/", "/chats"],
 ];
 

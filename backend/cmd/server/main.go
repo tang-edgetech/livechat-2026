@@ -156,6 +156,32 @@ func main() {
 		visitors.PATCH("/:uuid", handlers.UpdateVisitorHandler(state))
 		visitors.POST("/merge", handlers.MergeVisitorsHandler(state))
 
+		automationRules := authed.Group("/automation-rules")
+		automationRules.Use(staffOnly)
+		automationRules.GET("", handlers.ListAutomationRulesHandler(state))
+		automationRules.POST("", handlers.CreateAutomationRuleHandler(state))
+		automationRules.DELETE("/:id", handlers.DeleteAutomationRuleHandler(state))
+
+		// Any staff role can read/use canned messages; only Admin/Super
+		// Admin manage them (overview.md §6.3).
+		cannedMessages := authed.Group("/canned-messages")
+		cannedMessages.GET("", handlers.ListCannedMessagesHandler(state))
+		cannedMessages.POST("", staffOnly, handlers.CreateCannedMessageHandler(state))
+		cannedMessages.DELETE("/:id", staffOnly, handlers.DeleteCannedMessageHandler(state))
+
+		integrations := authed.Group("/integrations")
+		integrations.GET("", staffOnly, handlers.ListIntegrationsHandler(state))
+		integrations.POST("", middleware.RequireRole("super_admin"), handlers.CreateIntegrationHandler(state))
+		integrations.DELETE("/:id", middleware.RequireRole("super_admin"), handlers.DeleteIntegrationHandler(state))
+		integrations.POST("/:id/test", middleware.RequireRole("super_admin"), handlers.TestIntegrationHandler(state))
+
+		botFlows := authed.Group("/bot-flows")
+		botFlows.Use(staffOnly)
+		botFlows.GET("", handlers.ListBotFlowsHandler(state))
+		botFlows.POST("", handlers.CreateBotFlowHandler(state))
+		botFlows.PATCH("/:id", handlers.UpdateBotFlowHandler(state))
+		botFlows.DELETE("/:id", handlers.DeleteBotFlowHandler(state))
+
 		// Visitor-facing — unauthenticated by design (a real website
 		// visitor isn't logged in), validated via the (visitor, chat) uuid
 		// pair instead. This is the actual widget backend now (Phase 3).
@@ -163,7 +189,7 @@ func main() {
 		visitorChats.Use(requireDB(state))
 		visitorChats.POST("/start", handlers.StartChatHandler(state, hub, redisClient, chatStartLimiter))
 		visitorChats.GET("/chats/:uuid", handlers.GetVisitorChatHandler(state))
-		visitorChats.POST("/chats/:uuid/messages", handlers.SendVisitorMessageHandler(state, hub, messageLimiter))
+		visitorChats.POST("/chats/:uuid/messages", handlers.SendVisitorMessageHandler(state, hub, redisClient, messageLimiter))
 		visitorChats.POST("/chats/:uuid/files", handlers.UploadVisitorFileHandler(state, hub, fileDriver))
 		visitorChats.GET("/files/:uuid", handlers.DownloadVisitorFileHandler(state, fileDriver))
 		visitorChats.GET("/merchant/:code", handlers.GetPublicMerchantHandler(state))

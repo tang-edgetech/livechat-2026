@@ -3,13 +3,17 @@ package handlers
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 
 	"livechat/backend/internal/appstate"
+	"livechat/backend/internal/automation"
+	"livechat/backend/internal/botengine"
 	"livechat/backend/internal/passthrough"
 	"livechat/backend/internal/ratelimit"
 	"livechat/backend/internal/routing"
@@ -52,6 +56,7 @@ type startChatRequest struct {
 	Email            string `json:"email"`
 	DisplayName      string `json:"displayName"`
 	PassthroughToken string `json:"passthroughToken"`
+	PageURL          string `json:"pageUrl"`
 }
 
 func StartChatHandler(state *appstate.State, hub *ws.Hub, redisClient *redis.Client, limiter *ratelimit.Limiter) gin.HandlerFunc {
@@ -106,20 +111,46 @@ func StartChatHandler(state *appstate.State, hub *ws.Hub, redisClient *redis.Cli
 			return
 		}
 
-		agentID, status, err := routing.Route(context.Background(), conn, redisClient, merchantID)
+		// Created as pending/unassigned first so Automation and the Bot
+		// engine have a real chat_id to attach messages to; routing only
+		// runs afterward, and only if no bot flow claimed the chat.
+		chatUUID := uuid.New().String()
+		result, err := conn.Exec(
+			`INSERT INTO chat (uuid, merchant_id, visitor_id, status) VALUES (?, ?, ?, 'pending')`,
+			chatUUID, merchantID, v.ID,
+		)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error", "detail": err.Error()})
+			return
+		}
+		chatID, _ := result.LastInsertId()
+
+		evalCtx := map[string]string{
+			"page_url":    req.PageURL,
+			"time_of_day": time.Now().Format("15:04"),
+		}
+		applyAutomationGreeting(conn, hub, chatID, merchantID, evalCtx)
+
+		botStarted, err := botengine.TryStart(context.Background(), conn, hub, redisClient, chatID, merchantID, evalCtx)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error", "detail": err.Error()})
 			return
 		}
 
-		chatUUID := uuid.New().String()
-		_, err = conn.Exec(
-			`INSERT INTO chat (uuid, merchant_id, visitor_id, agent_id, status) VALUES (?, ?, ?, ?, ?)`,
-			chatUUID, merchantID, v.ID, agentID, status,
-		)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error", "detail": err.Error()})
-			return
+		status := "pending"
+		if !botStarted {
+			agentID, routedStatus, err := routing.Route(context.Background(), conn, redisClient, merchantID)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error", "detail": err.Error()})
+				return
+			}
+			if _, err := conn.Exec(`UPDATE chat SET agent_id = ?, status = ? WHERE id = ?`, agentID, routedStatus, chatID); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error", "detail": err.Error()})
+				return
+			}
+			status = routedStatus
+		} else {
+			conn.QueryRow(`SELECT status FROM chat WHERE id = ?`, chatID).Scan(&status)
 		}
 
 		notifyChatUpdated(conn, hub, merchantID, chatUUID)
@@ -129,6 +160,51 @@ func StartChatHandler(state *appstate.State, hub *ws.Hub, redisClient *redis.Cli
 			"visitorUuid": v.UUID,
 			"status":      status,
 		})
+	}
+}
+
+// applyAutomationGreeting inserts the first matching global/merchant
+// automation_rule's message as a system message (overview.md §6.3) —
+// independent of whether a bot flow also fires for this chat.
+func applyAutomationGreeting(conn *sql.DB, hub *ws.Hub, chatID, merchantID int64, evalCtx map[string]string) {
+	rows, err := conn.Query(
+		`SELECT DISTINCT r.condition, r.message FROM automation_rule r
+		 LEFT JOIN automation_rule_merchant arm ON arm.automation_rule_id = r.id
+		 WHERE r.is_active = TRUE AND r.trigger_type = 'chat_start'
+		 AND (r.is_global = TRUE OR arm.merchant_id = ?)
+		 ORDER BY r.created_at ASC`,
+		merchantID,
+	)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var conditionRaw sql.NullString
+		var message string
+		if err := rows.Scan(&conditionRaw, &message); err != nil {
+			return
+		}
+		var cs automation.ConditionSet
+		if conditionRaw.Valid {
+			json.Unmarshal([]byte(conditionRaw.String), &cs)
+		}
+		if !automation.Evaluate(cs, evalCtx) {
+			continue
+		}
+
+		var chatUUID string
+		var visitorID int64
+		conn.QueryRow(`SELECT uuid, visitor_id FROM chat WHERE id = ?`, chatID).Scan(&chatUUID, &visitorID)
+
+		msgID, createdAt, err := insertMessage(conn, chatID, "system", nil, message, "text", nil)
+		if err != nil {
+			return
+		}
+		out := messageOut{ID: msgID, ChatUUID: chatUUID, SenderType: "system", Body: message, Type: "text", CreatedAt: createdAt}
+		hub.Publish(ws.VisitorSubject(visitorID), ws.Event{Type: "message", Data: out})
+		return // one greeting per chat is enough
 	}
 }
 
@@ -182,7 +258,7 @@ func GetVisitorChatHandler(state *appstate.State) gin.HandlerFunc {
 	}
 }
 
-func SendVisitorMessageHandler(state *appstate.State, hub *ws.Hub, limiter *ratelimit.Limiter) gin.HandlerFunc {
+func SendVisitorMessageHandler(state *appstate.State, hub *ws.Hub, redisClient *redis.Client, limiter *ratelimit.Limiter) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		conn := state.DB()
 
@@ -217,6 +293,12 @@ func SendVisitorMessageHandler(state *appstate.State, hub *ws.Hub, limiter *rate
 			hub.Publish(ws.AgentSubject(ref.AgentID.Int64), ws.Event{Type: "message", Data: out})
 		}
 		notifyChatUpdated(conn, hub, ref.MerchantID, c.Param("uuid"))
+
+		if ref.Status == "bot" {
+			// Best-effort: a bot-engine hiccup shouldn't fail the
+			// visitor's own message from being saved/delivered above.
+			botengine.ContinueOnVisitorMessage(context.Background(), conn, hub, redisClient, ref.ID, req.Body)
+		}
 
 		c.JSON(http.StatusOK, out)
 	}

@@ -7,7 +7,7 @@ import { useParams, useSearchParams } from "next/navigation";
 
 import { apiFetch, apiGet, apiPost, ApiError } from "@/lib/api";
 import { useSocket } from "@/lib/socket";
-import type { ChatMessage } from "@/lib/chatTypes";
+import { appendMessage, type ChatMessage } from "@/lib/chatTypes";
 import type { WidgetConfig } from "@/lib/types";
 
 type Session = { chatUuid: string; visitorUuid: string };
@@ -20,6 +20,7 @@ export default function WidgetPage() {
   const { code } = useParams<{ code: string }>();
   const searchParams = useSearchParams();
   const passthroughToken = searchParams.get("token");
+  const parentUrl = searchParams.get("parentUrl") ?? "";
 
   const [merchantName, setMerchantName] = useState<string | null>(null);
   const [config, setConfig] = useState<WidgetConfig>({});
@@ -84,6 +85,7 @@ export default function WidgetPage() {
         <PreChatForm
           passthroughToken={passthroughToken}
           merchantCode={code}
+          parentUrl={parentUrl}
           onStarted={startSession}
           accent={accent}
         />
@@ -95,11 +97,13 @@ export default function WidgetPage() {
 function PreChatForm({
   merchantCode,
   passthroughToken,
+  parentUrl,
   onStarted,
   accent,
 }: {
   merchantCode: string;
   passthroughToken: string | null;
+  parentUrl: string;
   onStarted: (s: Session) => void;
   accent: string;
 }) {
@@ -113,8 +117,8 @@ function PreChatForm({
     setSubmitting(true);
     try {
       const body = passthroughOnly
-        ? { merchantCode, passthroughToken }
-        : { merchantCode, phone, email, displayName: name };
+        ? { merchantCode, passthroughToken, pageUrl: parentUrl }
+        : { merchantCode, phone, email, displayName: name, pageUrl: parentUrl };
       const res = await apiPost<Session>("/api/visitor/start", body);
       onStarted(res);
     } catch (err) {
@@ -187,18 +191,19 @@ function ChatWindow({ session, accent }: { session: Session; accent: string }) {
     [session],
   );
   useSocket(wsPath, (event) => {
-    if (event.type === "message") setMessages((prev) => [...prev, event.data as ChatMessage]);
+    if (event.type === "message") setMessages((prev) => appendMessage(prev, event.data as ChatMessage));
     if (event.type === "chat_closed") setStatus("closed");
   });
 
-  async function send() {
-    if (!draft.trim()) return;
+  async function send(overrideBody?: string) {
+    const body = overrideBody ?? draft;
+    if (!body.trim()) return;
     const sent = await apiPost<ChatMessage>(
       `/api/visitor/chats/${session.chatUuid}/messages?visitor=${session.visitorUuid}`,
-      { body: draft },
+      { body },
     );
-    setMessages((prev) => [...prev, sent]);
-    setDraft("");
+    setMessages((prev) => appendMessage(prev, sent));
+    if (overrideBody === undefined) setDraft("");
   }
 
   async function uploadFile(file: File) {
@@ -208,7 +213,7 @@ function ChatWindow({ session, accent }: { session: Session; accent: string }) {
       `/api/visitor/chats/${session.chatUuid}/files?visitor=${session.visitorUuid}`,
       { method: "POST", body: form },
     );
-    setMessages((prev) => [...prev, sent]);
+    setMessages((prev) => appendMessage(prev, sent));
     return false;
   }
 
@@ -232,7 +237,8 @@ function ChatWindow({ session, accent }: { session: Session; accent: string }) {
                   : { backgroundColor: "rgba(0,0,0,0.05)" }
               }
             >
-              {m.body}
+              <div>{m.body}</div>
+              {m.type === "quick_reply" && <QuickReplyOptions message={m} accent={accent} onPick={(v) => send(v)} />}
             </div>
           </div>
         ))}
@@ -250,12 +256,41 @@ function ChatWindow({ session, accent }: { session: Session; accent: string }) {
         <Input
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
-          onPressEnter={send}
+          onPressEnter={() => send()}
           disabled={isClosed}
           placeholder={isClosed ? "Chat ended" : "Type a message"}
         />
-        <Button type="primary" icon={<SendOutlined />} onClick={send} disabled={isClosed} style={{ backgroundColor: isClosed ? undefined : accent, borderColor: isClosed ? undefined : accent }} />
+        <Button type="primary" icon={<SendOutlined />} onClick={() => send()} disabled={isClosed} style={{ backgroundColor: isClosed ? undefined : accent, borderColor: isClosed ? undefined : accent }} />
       </Space.Compact>
+    </div>
+  );
+}
+
+// A visitor's click just posts a normal type=text message with the
+// chosen option's value as body (overview.md §4/§6.4) — no special-case
+// handling needed downstream, the bot flow's ask_question node reads it
+// exactly like free-typed input.
+function QuickReplyOptions({ message, accent, onPick }: { message: ChatMessage; accent: string; onPick: (value: string) => void }) {
+  let options: { label: string; value: string }[] = [];
+  try {
+    options = message.metadata ? JSON.parse(message.metadata).options ?? [] : [];
+  } catch {
+    // ignore
+  }
+  if (options.length === 0) return null;
+
+  return (
+    <div className="mt-2 flex flex-wrap gap-1">
+      {options.map((opt) => (
+        <button
+          key={opt.value}
+          onClick={() => onPick(opt.value)}
+          className="rounded-full border px-2 py-1 text-xs"
+          style={{ borderColor: accent, color: accent, background: "#fff" }}
+        >
+          {opt.label}
+        </button>
+      ))}
     </div>
   );
 }

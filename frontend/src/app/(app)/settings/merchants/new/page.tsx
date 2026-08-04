@@ -29,7 +29,7 @@ export default function CreateMerchantPage() {
     try {
       await apiPost("/api/merchants", values);
       message.success("Merchant created");
-      router.push("/settings");
+      router.push("/settings/merchants");
     } catch (err) {
       message.error(err instanceof ApiError ? err.message : "Could not create merchant");
     } finally {
@@ -59,7 +59,7 @@ export default function CreateMerchantPage() {
           <Select
             allowClear
             placeholder="Select an Admin"
-            options={admins.map((a) => ({ value: a.uuid, label: `${a.display_name} (${a.username})` }))}
+            options={admins.map((a) => ({ value: a.uuid, label: `${a.display_name} (${a.email})` }))}
           />
         </Form.Item>
         <Button type="primary" htmlType="submit" loading={submitting}>

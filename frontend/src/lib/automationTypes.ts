@@ -5,6 +5,7 @@ export type AutomationRule = {
   message: string;
   is_global: boolean;
   is_active: boolean;
+  is_html: boolean;
   merchant_uuid: string | null;
 };
 
@@ -13,12 +14,22 @@ export type CannedMessage = {
   title: string;
   body: string;
   is_global: boolean;
+  is_html: boolean;
   merchant_uuid: string | null;
 };
 
 export type WebhookIntegration = {
   id: number;
   name: string;
+  events?: string[];
+};
+
+export type WebhookIntegrationDetail = {
+  id: number;
+  name: string;
+  url: string;
+  isGlobal: boolean;
+  merchantUuid: string | null;
   events?: string[];
 };
 

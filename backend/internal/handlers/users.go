@@ -3,6 +3,7 @@ package handlers
 import (
 	"database/sql"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -11,6 +12,7 @@ import (
 
 	"livechat/backend/internal/appstate"
 	"livechat/backend/internal/audit"
+	"livechat/backend/internal/password"
 )
 
 type merchantMini struct {
@@ -19,13 +21,14 @@ type merchantMini struct {
 }
 
 type userOut struct {
-	UUID        string         `json:"uuid"`
-	DisplayName string         `json:"display_name"`
-	Username    string         `json:"username"`
-	Email       string         `json:"email"`
-	Role        string         `json:"role"`
-	Status      string         `json:"status"`
-	Merchants   []merchantMini `json:"merchants"`
+	UUID          string         `json:"uuid"`
+	DisplayName   string         `json:"display_name"`
+	Email         string         `json:"email"`
+	Role          string         `json:"role"`
+	Status        string         `json:"status"`
+	CreatedAt     string         `json:"created_at"`
+	CreatedByName *string        `json:"created_by_name"`
+	Merchants     []merchantMini `json:"merchants"`
 }
 
 // merchantsByUserID batches the user_merchant lookup for a set of users —
@@ -94,15 +97,19 @@ func ListUsersHandler(state *appstate.State) gin.HandlerFunc {
 		var err error
 		if role == "super_admin" {
 			rows, err = conn.Query(
-				`SELECT u.id, u.uuid, u.display_name, u.username, u.email, r.slug, u.status
-				 FROM user u JOIN role r ON r.id = u.role_id ORDER BY u.created_at DESC`,
+				`SELECT u.id, u.uuid, u.display_name, u.email, r.slug, u.status, u.created_at, creator.display_name
+				 FROM user u
+				 JOIN role r ON r.id = u.role_id
+				 LEFT JOIN user creator ON creator.id = u.created_by
+				 ORDER BY u.created_at DESC`,
 			)
 		} else {
 			rows, err = conn.Query(
-				`SELECT DISTINCT u.id, u.uuid, u.display_name, u.username, u.email, r.slug, u.status
+				`SELECT DISTINCT u.id, u.uuid, u.display_name, u.email, r.slug, u.status, u.created_at, creator.display_name
 				 FROM user u
 				 JOIN role r ON r.id = u.role_id
 				 JOIN user_merchant um ON um.user_id = u.id
+				 LEFT JOIN user creator ON creator.id = u.created_by
 				 WHERE r.slug = 'agent' AND um.merchant_id IN (
 				   SELECT merchant_id FROM user_merchant WHERE user_id = ?
 				 )
@@ -124,7 +131,7 @@ func ListUsersHandler(state *appstate.State) gin.HandlerFunc {
 		var ids []int64
 		for rows.Next() {
 			var r row
-			if err := rows.Scan(&r.id, &r.u.UUID, &r.u.DisplayName, &r.u.Username, &r.u.Email, &r.u.Role, &r.u.Status); err != nil {
+			if err := rows.Scan(&r.id, &r.u.UUID, &r.u.DisplayName, &r.u.Email, &r.u.Role, &r.u.Status, &r.u.CreatedAt, &r.u.CreatedByName); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
 				return
 			}
@@ -152,7 +159,6 @@ func ListUsersHandler(state *appstate.State) gin.HandlerFunc {
 }
 
 type createUserRequest struct {
-	Username      string   `json:"username" binding:"required"`
 	Email         string   `json:"email" binding:"required"`
 	DisplayName   string   `json:"displayName" binding:"required"`
 	Password      string   `json:"password" binding:"required"`
@@ -175,8 +181,8 @@ func CreateUserHandler(state *appstate.State) gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request"})
 			return
 		}
-		if len(req.Password) < 10 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "password_too_short", "detail": "minimum 10 characters"})
+		if err := password.Validate(req.Password); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "password_invalid", "detail": "8-16 characters, at least one uppercase letter and one digit"})
 			return
 		}
 
@@ -230,11 +236,15 @@ func CreateUserHandler(state *appstate.State) gin.HandlerFunc {
 
 		newUUID := uuid.New().String()
 		result, err := conn.Exec(
-			`INSERT INTO user (uuid, role_id, display_name, username, email, password_hash, status)
-			 VALUES (?, ?, ?, ?, ?, ?, 'active')`,
-			newUUID, roleID, req.DisplayName, req.Username, req.Email, string(passwordHash),
+			`INSERT INTO user (uuid, role_id, display_name, email, password_hash, status, created_by)
+			 VALUES (?, ?, ?, ?, ?, 'active', ?)`,
+			newUUID, roleID, req.DisplayName, req.Email, string(passwordHash), actorID,
 		)
 		if err != nil {
+			if strings.Contains(err.Error(), "Duplicate entry") {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "email_taken"})
+				return
+			}
 			c.JSON(http.StatusBadRequest, gin.H{"error": "create_failed", "detail": err.Error()})
 			return
 		}
@@ -251,7 +261,7 @@ func CreateUserHandler(state *appstate.State) gin.HandlerFunc {
 		}
 
 		audit.Log(conn, audit.Entry{
-			UserID: &actorID, Category: "user", Message: "user created: " + req.Username + " (" + targetRole + ")",
+			UserID: &actorID, Category: "user", Message: "user created: " + req.DisplayName + " (" + targetRole + ")",
 			StatusCode: 200, Source: "web", IPAddress: c.ClientIP(),
 		})
 		c.JSON(http.StatusOK, gin.H{"uuid": newUUID})
@@ -293,6 +303,51 @@ func resolveTarget(conn *sql.DB, actorRole string, actorID int64, targetUUID str
 
 type setStatusRequest struct {
 	Status string `json:"status" binding:"required,oneof=active inactive suspended"`
+}
+
+type bulkStatusRequest struct {
+	UUIDs  []string `json:"uuids" binding:"required"`
+	Status string   `json:"status" binding:"required,oneof=active inactive suspended"`
+}
+
+// BulkSetUserStatusHandler applies the same scoping rule as
+// SetUserStatusHandler (resolveTarget) to every target, plus a blanket
+// exclusion of super_admin accounts from bulk operations regardless of
+// actor — a safety guard against accidentally mass-deactivating every
+// Super Admin at once. Best-effort: invalid/out-of-scope/super_admin
+// targets are skipped rather than failing the whole batch.
+func BulkSetUserStatusHandler(state *appstate.State) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		conn := state.DB()
+		actorRole := c.MustGet("role").(string)
+		actorID := c.MustGet("user_id").(int64)
+
+		var req bulkStatusRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request"})
+			return
+		}
+
+		applied, skipped := 0, 0
+		for _, u := range req.UUIDs {
+			targetID, targetRole, err := resolveTarget(conn, actorRole, actorID, u)
+			if err != nil || targetRole == "super_admin" {
+				skipped++
+				continue
+			}
+			if _, err := conn.Exec(`UPDATE user SET status = ? WHERE id = ?`, req.Status, targetID); err != nil {
+				skipped++
+				continue
+			}
+			applied++
+		}
+
+		audit.Log(conn, audit.Entry{
+			UserID: &actorID, Category: "user", Message: "bulk user status set to " + req.Status + " (" + strconv.Itoa(applied) + " applied)",
+			StatusCode: 200, Source: "web", IPAddress: c.ClientIP(),
+		})
+		c.JSON(http.StatusOK, gin.H{"applied": applied, "skipped": skipped})
+	}
 }
 
 // SetUserStatusHandler (overview.md §6.2: Admin sets Agent account
@@ -344,8 +399,8 @@ func ForcePasswordHandler(state *appstate.State) gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request"})
 			return
 		}
-		if len(req.NewPassword) < 10 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "password_too_short", "detail": "minimum 10 characters"})
+		if err := password.Validate(req.NewPassword); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "password_invalid", "detail": "8-16 characters, at least one uppercase letter and one digit"})
 			return
 		}
 

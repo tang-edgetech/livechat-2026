@@ -28,7 +28,7 @@ export default function LoginPage() {
       router.push(me.role === "agent" ? "/chats" : "/dashboard");
     } catch (err) {
       const detail = err instanceof ApiError ? err.message : "Something went wrong";
-      message.error(detail === "invalid_credentials" ? "Incorrect username/email or password" : detail);
+      message.error(detail === "invalid_credentials" ? "Incorrect email or password" : detail);
     } finally {
       setSubmitting(false);
     }
@@ -41,7 +41,7 @@ export default function LoginPage() {
           LiveChat
         </Typography.Title>
         <Form layout="vertical" onFinish={handleSubmit} disabled={submitting}>
-          <Form.Item name="login" label="Username or email" rules={[{ required: true }]}>
+          <Form.Item name="login" label="Email" rules={[{ required: true, type: "email" }]}>
             <Input autoFocus />
           </Form.Item>
           <Form.Item name="password" label="Password" rules={[{ required: true }]}>

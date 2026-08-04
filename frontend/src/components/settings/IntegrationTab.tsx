@@ -2,11 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { Alert, Button, Card, Checkbox, Input, Select, Space, Table, Typography, message } from "antd";
-import { DeleteOutlined, PlusOutlined } from "@ant-design/icons";
+import { DeleteOutlined, EditOutlined, PlusOutlined } from "@ant-design/icons";
 
-import { apiDelete, apiGet, apiPost, ApiError } from "@/lib/api";
+import { apiDelete, apiGet, apiPatch, apiPost, ApiError } from "@/lib/api";
 import { confirmAction } from "@/components/modals/confirm";
-import type { ApiKey, WebhookIntegration } from "@/lib/automationTypes";
+import type { ApiKey, WebhookIntegrationDetail, WebhookIntegration } from "@/lib/automationTypes";
 import type { Merchant } from "@/lib/types";
 
 const WEBHOOK_EVENTS = [
@@ -26,13 +26,16 @@ export function IntegrationTab() {
   const [merchants, setMerchants] = useState<Merchant[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
+  const [secret, setSecret] = useState("");
   const [isGlobal, setIsGlobal] = useState(false);
   const [merchantUuid, setMerchantUuid] = useState<string | undefined>(undefined);
   const [events, setEvents] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [testing, setTesting] = useState<number | null>(null);
+  const [loadingDetail, setLoadingDetail] = useState(false);
 
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
   const [apiKeysLoading, setApiKeysLoading] = useState(true);
@@ -63,6 +66,37 @@ export function IntegrationTab() {
     apiGet<{ merchants: Merchant[] }>("/api/merchants").then((res) => setMerchants(res.merchants));
   }, []);
 
+  function startCreate() {
+    setEditingId(null);
+    setName("");
+    setUrl("");
+    setSecret("");
+    setIsGlobal(false);
+    setMerchantUuid(undefined);
+    setEvents([]);
+    setCreating(true);
+  }
+
+  async function startEdit(id: number) {
+    setEditingId(id);
+    setCreating(true);
+    setLoadingDetail(true);
+    try {
+      const detail = await apiGet<WebhookIntegrationDetail>(`/api/integrations/${id}`);
+      setName(detail.name);
+      setUrl(detail.url);
+      setSecret("");
+      setIsGlobal(detail.isGlobal);
+      setMerchantUuid(detail.merchantUuid ?? undefined);
+      setEvents(detail.events ?? []);
+    } catch (err) {
+      message.error(err instanceof ApiError ? err.message : "Could not load connection");
+      setCreating(false);
+    } finally {
+      setLoadingDetail(false);
+    }
+  }
+
   async function submit() {
     if (!name.trim() || !url.trim()) {
       message.error("Please fill in a name and endpoint URL.");
@@ -74,15 +108,22 @@ export function IntegrationTab() {
     }
     setSubmitting(true);
     try {
-      await apiPost("/api/integrations", { name, url, isGlobal, merchantUuid: isGlobal ? undefined : merchantUuid, events });
-      message.success("Connection created");
+      const payload = { name, url, secret, isGlobal, merchantUuid: isGlobal ? undefined : merchantUuid, events };
+      if (editingId) {
+        await apiPatch(`/api/integrations/${editingId}`, payload);
+        message.success("Connection updated");
+      } else {
+        await apiPost("/api/integrations", payload);
+        message.success("Connection created");
+      }
       setCreating(false);
+      setEditingId(null);
       setName("");
       setUrl("");
       setEvents([]);
       load();
-    } catch {
-      message.error("Could not create connection");
+    } catch (err) {
+      message.error(err instanceof ApiError ? err.message : "Could not save connection");
     } finally {
       setSubmitting(false);
     }
@@ -162,15 +203,18 @@ export function IntegrationTab() {
 
         {!creating ? (
           <div>
-            <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreating(true)}>
+            <Button type="primary" icon={<PlusOutlined />} onClick={startCreate}>
               Create Connection
             </Button>
           </div>
         ) : (
-          <Card title="New connection">
+          <Card title={editingId ? "Edit connection" : "New connection"} loading={loadingDetail}>
             <Space orientation="vertical" style={{ width: "100%", maxWidth: 480 }}>
               <Input placeholder="Name (e.g. Our AI Assistant)" value={name} onChange={(e) => setName(e.target.value)} />
               <Input placeholder="Endpoint URL (https://...)" value={url} onChange={(e) => setUrl(e.target.value)} />
+              {editingId && (
+                <Input placeholder="Leave blank to keep the existing secret" value={secret} onChange={(e) => setSecret(e.target.value)} />
+              )}
               <Checkbox checked={isGlobal} onChange={(e) => setIsGlobal(e.target.checked)}>
                 Apply to all merchants
               </Checkbox>
@@ -201,7 +245,7 @@ export function IntegrationTab() {
                 event notifications), so the other system can verify the request came from us.
               </Typography.Text>
               <Space>
-                <Button onClick={() => setCreating(false)}>Cancel</Button>
+                <Button onClick={() => { setCreating(false); setEditingId(null); }}>Cancel</Button>
                 <Button type="primary" loading={submitting} onClick={submit}>
                   Save
                 </Button>
@@ -229,6 +273,7 @@ export function IntegrationTab() {
                   <Button size="small" loading={testing === r.id} onClick={() => test(r.id)}>
                     Test Connection
                   </Button>
+                  <Button type="text" icon={<EditOutlined />} onClick={() => startEdit(r.id)} />
                   <Button type="text" danger icon={<DeleteOutlined />} onClick={() => remove(r.id)} />
                 </Space>
               ),

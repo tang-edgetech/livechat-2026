@@ -7,7 +7,8 @@ import { useParams, useSearchParams } from "next/navigation";
 
 import { apiFetch, apiGet, apiPost, ApiError } from "@/lib/api";
 import { useSocket } from "@/lib/socket";
-import { appendMessage, type ChatMessage } from "@/lib/chatTypes";
+import { appendMessage, messageIsHtml, type ChatMessage } from "@/lib/chatTypes";
+import { sanitizeHtml } from "@/lib/sanitizeHtml";
 import type { WidgetConfig } from "@/lib/types";
 
 type Session = { chatUuid: string; visitorUuid: string };
@@ -258,7 +259,11 @@ function ChatWindow({ session, accent }: { session: Session; accent: string }) {
                   : { backgroundColor: "rgba(0,0,0,0.05)" }
               }
             >
-              <div>{m.body}</div>
+              {messageIsHtml(m) ? (
+                <div dangerouslySetInnerHTML={{ __html: sanitizeHtml(m.body) }} />
+              ) : (
+                <div>{m.body}</div>
+              )}
               {m.type === "quick_reply" && <QuickReplyOptions message={m} accent={accent} onPick={(v) => send(v)} />}
             </div>
           </div>

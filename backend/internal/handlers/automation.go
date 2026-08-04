@@ -8,6 +8,7 @@ import (
 
 	"livechat/backend/internal/appstate"
 	"livechat/backend/internal/audit"
+	"livechat/backend/internal/htmlguard"
 )
 
 type automationRuleOut struct {
@@ -17,6 +18,7 @@ type automationRuleOut struct {
 	Message      string  `json:"message"`
 	IsGlobal     bool    `json:"is_global"`
 	IsActive     bool    `json:"is_active"`
+	IsHtml       bool    `json:"is_html"`
 	MerchantUUID *string `json:"merchant_uuid"`
 }
 
@@ -36,7 +38,7 @@ func ListAutomationRulesHandler(state *appstate.State) gin.HandlerFunc {
 			return
 		}
 		placeholders, args := int64SliceToPlaceholders(merchantIDs)
-		query := `SELECT DISTINCT r.id, r.name, r.condition, r.message, r.is_global, r.is_active, m.uuid
+		query := `SELECT DISTINCT r.id, r.name, r.condition, r.message, r.is_global, r.is_active, r.is_html, m.uuid
 		          FROM automation_rule r
 		          LEFT JOIN automation_rule_merchant arm ON arm.automation_rule_id = r.id
 		          LEFT JOIN merchant m ON m.id = arm.merchant_id
@@ -56,7 +58,7 @@ func ListAutomationRulesHandler(state *appstate.State) gin.HandlerFunc {
 		out := []automationRuleOut{}
 		for rows.Next() {
 			var r automationRuleOut
-			if err := rows.Scan(&r.ID, &r.Name, &r.Condition, &r.Message, &r.IsGlobal, &r.IsActive, &r.MerchantUUID); err != nil {
+			if err := rows.Scan(&r.ID, &r.Name, &r.Condition, &r.Message, &r.IsGlobal, &r.IsActive, &r.IsHtml, &r.MerchantUUID); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
 				return
 			}
@@ -72,6 +74,7 @@ type saveAutomationRuleRequest struct {
 	Message      string  `json:"message" binding:"required"`
 	IsGlobal     bool    `json:"isGlobal"`
 	IsActive     bool    `json:"isActive"`
+	IsHtml       bool    `json:"isHtml"`
 	MerchantUUID *string `json:"merchantUuid"`
 }
 
@@ -93,6 +96,10 @@ func CreateAutomationRuleHandler(state *appstate.State) gin.HandlerFunc {
 			c.JSON(http.StatusForbidden, gin.H{"error": "only_super_admin_can_create_global_rules"})
 			return
 		}
+		if req.IsHtml && htmlguard.IsDangerous(req.Message) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "html_not_allowed"})
+			return
+		}
 
 		var merchantID *int64
 		if req.MerchantUUID != nil && *req.MerchantUUID != "" {
@@ -108,8 +115,8 @@ func CreateAutomationRuleHandler(state *appstate.State) gin.HandlerFunc {
 		}
 
 		result, err := conn.Exec(
-			`INSERT INTO automation_rule (name, `+"`condition`"+`, message, is_global, is_active, created_by) VALUES (?, ?, ?, ?, ?, ?)`,
-			req.Name, nullIfEmpty(req.Condition), req.Message, req.IsGlobal, req.IsActive, userID,
+			`INSERT INTO automation_rule (name, `+"`condition`"+`, message, is_global, is_active, is_html, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			req.Name, nullIfEmpty(req.Condition), req.Message, req.IsGlobal, req.IsActive, req.IsHtml, userID,
 		)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error", "detail": err.Error()})
@@ -144,6 +151,10 @@ func UpdateAutomationRuleHandler(state *appstate.State) gin.HandlerFunc {
 			c.JSON(http.StatusForbidden, gin.H{"error": "only_super_admin_can_create_global_rules"})
 			return
 		}
+		if req.IsHtml && htmlguard.IsDangerous(req.Message) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "html_not_allowed"})
+			return
+		}
 
 		var merchantID *int64
 		if req.MerchantUUID != nil && *req.MerchantUUID != "" {
@@ -159,8 +170,8 @@ func UpdateAutomationRuleHandler(state *appstate.State) gin.HandlerFunc {
 		}
 
 		if _, err := conn.Exec(
-			`UPDATE automation_rule SET name = ?, `+"`condition`"+` = ?, message = ?, is_global = ?, is_active = ? WHERE id = ?`,
-			req.Name, nullIfEmpty(req.Condition), req.Message, req.IsGlobal, req.IsActive, id,
+			`UPDATE automation_rule SET name = ?, `+"`condition`"+` = ?, message = ?, is_global = ?, is_active = ?, is_html = ? WHERE id = ?`,
+			req.Name, nullIfEmpty(req.Condition), req.Message, req.IsGlobal, req.IsActive, req.IsHtml, id,
 		); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error", "detail": err.Error()})
 			return

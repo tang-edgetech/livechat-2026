@@ -79,7 +79,7 @@ export function EmbedTab() {
       />
 
       {detail && (
-        <Card loading={loading} style={{ maxWidth: 640 }}>
+        <Card loading={loading}>
           <EmbedSection code={detail.code} config={config} onConfigChange={setConfig} />
           {canEdit && (
             <Button type="primary" loading={saving} onClick={save} style={{ marginTop: 16 }}>

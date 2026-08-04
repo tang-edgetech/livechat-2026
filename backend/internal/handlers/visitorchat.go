@@ -61,6 +61,27 @@ type startChatRequest struct {
 	PageURL          string `json:"pageUrl"`
 }
 
+type openChat struct {
+	uuid   string
+	status string
+}
+
+// findOpenChat returns a visitor's most recent still-open chat, if any —
+// shared by StartChatHandler and CreateChatV1Handler so a returning
+// identity (resolved by visitor.Resolve via phone/email) resumes their
+// conversation instead of getting a fresh blank one every time.
+func findOpenChat(conn *sql.DB, visitorID int64) (*openChat, error) {
+	var oc openChat
+	err := conn.QueryRow(
+		`SELECT uuid, status FROM chat WHERE visitor_id = ? AND status IN ('pending','active','bot') ORDER BY started_at DESC LIMIT 1`,
+		visitorID,
+	).Scan(&oc.uuid, &oc.status)
+	if err != nil {
+		return nil, err
+	}
+	return &oc, nil
+}
+
 func StartChatHandler(state *appstate.State, hub *ws.Hub, redisClient *redis.Client, limiter *ratelimit.Limiter) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		conn := state.DB()
@@ -110,6 +131,18 @@ func StartChatHandler(state *appstate.State, hub *ws.Hub, redisClient *redis.Cli
 		v, err := visitor.Resolve(conn, merchantID, phone, email, displayName, c.ClientIP())
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error", "detail": err.Error()})
+			return
+		}
+
+		// Resume an existing open chat rather than always starting a new
+		// one (overview.md §10.2) — a logged-in customer's own site
+		// reissues a fresh passthrough token on every page load, so
+		// without this, visiting from a new device (or after clearing
+		// localStorage) would silently orphan their prior conversation
+		// instead of reconnecting to it. A closed chat still starts
+		// fresh — that conversation is genuinely done.
+		if existing, err := findOpenChat(conn, v.ID); err == nil {
+			c.JSON(http.StatusOK, gin.H{"chatUuid": existing.uuid, "visitorUuid": v.UUID, "status": existing.status})
 			return
 		}
 
@@ -171,7 +204,7 @@ func StartChatHandler(state *appstate.State, hub *ws.Hub, redisClient *redis.Cli
 // independent of whether a bot flow also fires for this chat.
 func applyAutomationGreeting(conn *sql.DB, hub *ws.Hub, chatID, merchantID int64, evalCtx map[string]string) {
 	rows, err := conn.Query(
-		`SELECT DISTINCT r.condition, r.message FROM automation_rule r
+		`SELECT DISTINCT r.condition, r.message, r.is_html FROM automation_rule r
 		 LEFT JOIN automation_rule_merchant arm ON arm.automation_rule_id = r.id
 		 WHERE r.is_active = TRUE AND r.trigger_type = 'chat_start'
 		 AND (r.is_global = TRUE OR arm.merchant_id = ?)
@@ -186,7 +219,8 @@ func applyAutomationGreeting(conn *sql.DB, hub *ws.Hub, chatID, merchantID int64
 	for rows.Next() {
 		var conditionRaw sql.NullString
 		var message string
-		if err := rows.Scan(&conditionRaw, &message); err != nil {
+		var isHtml bool
+		if err := rows.Scan(&conditionRaw, &message, &isHtml); err != nil {
 			return
 		}
 		var cs automation.ConditionSet
@@ -201,11 +235,18 @@ func applyAutomationGreeting(conn *sql.DB, hub *ws.Hub, chatID, merchantID int64
 		var visitorID int64
 		conn.QueryRow(`SELECT uuid, visitor_id FROM chat WHERE id = ?`, chatID).Scan(&chatUUID, &visitorID)
 
-		msgID, createdAt, err := insertMessage(conn, chatID, "system", nil, message, "text", nil)
+		var metadata *string
+		if isHtml {
+			raw, _ := json.Marshal(map[string]bool{"isHtml": true})
+			s := string(raw)
+			metadata = &s
+		}
+
+		msgID, createdAt, err := insertMessage(conn, chatID, "system", nil, message, "text", metadata)
 		if err != nil {
 			return
 		}
-		out := messageOut{ID: msgID, ChatUUID: chatUUID, SenderType: "system", Body: message, Type: "text", CreatedAt: createdAt}
+		out := messageOut{ID: msgID, ChatUUID: chatUUID, SenderType: "system", Body: message, Type: "text", CreatedAt: createdAt, Metadata: metadata}
 		hub.Publish(ws.VisitorSubject(visitorID), ws.Event{Type: "message", Data: out})
 		return // one greeting per chat is enough
 	}

@@ -88,8 +88,8 @@ export default function EditUserPage() {
   }
 
   function forcePassword() {
-    if (newPassword.length < 10) {
-      message.error("Password must be at least 10 characters");
+    if (newPassword.length < 8 || newPassword.length > 16 || !/[A-Z]/.test(newPassword) || !/[0-9]/.test(newPassword)) {
+      message.error("Password must be 8-16 characters with at least one uppercase letter and one digit");
       return;
     }
     confirmAction({
@@ -119,10 +119,13 @@ export default function EditUserPage() {
         <Card title="Basic Information">
           <Space orientation="vertical" style={{ width: "100%" }}>
             <Descriptions column={1} bordered size="small">
-              <Descriptions.Item label="Display Name">{target.display_name}</Descriptions.Item>
-              <Descriptions.Item label="Username">{target.username}</Descriptions.Item>
-              <Descriptions.Item label="Email">{target.email}</Descriptions.Item>
+              <Descriptions.Item label="Full Name">{target.display_name}</Descriptions.Item>
+              <Descriptions.Item label="Email Address">{target.email}</Descriptions.Item>
               <Descriptions.Item label="Role">{titleCase(target.role)}</Descriptions.Item>
+              <Descriptions.Item label="Created">
+                {target.created_at}
+                {target.created_by_name ? ` by ${target.created_by_name}` : ""}
+              </Descriptions.Item>
             </Descriptions>
 
             <div>
@@ -162,7 +165,7 @@ export default function EditUserPage() {
           <Card title="Force Password Reset">
             <Space orientation="vertical" style={{ width: "100%" }}>
               <Input.Password
-                placeholder="New password (min 10 characters)"
+                placeholder="New password (8-16 chars, 1 uppercase, 1 digit)"
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
               />

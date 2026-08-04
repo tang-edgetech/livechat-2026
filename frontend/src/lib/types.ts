@@ -1,10 +1,11 @@
 export type StaffUser = {
   uuid: string;
   display_name: string;
-  username: string;
   email: string;
   role: "super_admin" | "admin" | "agent";
   status: "active" | "inactive" | "suspended";
+  created_at: string;
+  created_by_name: string | null;
   merchants: { uuid: string; name: string }[];
 };
 

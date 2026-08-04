@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -131,6 +132,97 @@ func CreateIntegrationHandler(state *appstate.State) gin.HandlerFunc {
 
 		audit.Log(conn, audit.Entry{MerchantID: merchantID, UserID: &userID, Category: "integration", Message: "webhook integration created: " + req.Name, StatusCode: 200, Source: "web", IPAddress: c.ClientIP()})
 		c.JSON(http.StatusOK, gin.H{"id": id})
+	}
+}
+
+type integrationDetailOut struct {
+	ID           int64    `json:"id"`
+	Name         string   `json:"name"`
+	URL          string   `json:"url"`
+	IsGlobal     bool     `json:"isGlobal"`
+	MerchantUUID *string  `json:"merchantUuid"`
+	Events       []string `json:"events,omitempty"`
+}
+
+// GetIntegrationHandler — Super Admin only, backs the edit form. Unlike
+// ListIntegrationsHandler this includes the URL (the raw-technical-field
+// exception overview.md §6.5 already carves out for Super Admin), but
+// still never returns the secret — same "shown once, never again" rule
+// as widget-identity/auto-login secrets elsewhere in this codebase.
+func GetIntegrationHandler(state *appstate.State) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		conn := state.DB()
+		var configRaw string
+		var isGlobal bool
+		if err := conn.QueryRow(`SELECT config, is_global FROM integration WHERE id = ? AND type = 'webhook'`, c.Param("id")).Scan(&configRaw, &isGlobal); err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+			return
+		}
+		var cfg webhookConfig
+		json.Unmarshal([]byte(configRaw), &cfg)
+
+		var merchantUUID *string
+		var uid string
+		if err := conn.QueryRow(`SELECT m.uuid FROM integration_merchant im JOIN merchant m ON m.id = im.merchant_id WHERE im.integration_id = ?`, c.Param("id")).Scan(&uid); err == nil {
+			merchantUUID = &uid
+		}
+
+		id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+		c.JSON(http.StatusOK, integrationDetailOut{
+			ID: id, Name: cfg.Name, URL: cfg.URL, IsGlobal: isGlobal, MerchantUUID: merchantUUID, Events: cfg.Events,
+		})
+	}
+}
+
+// UpdateIntegrationHandler — Super Admin only. An empty Secret in the
+// request leaves the existing secret untouched (every system already
+// trusting it keeps working); a non-empty one rotates it, same as
+// CreateIntegrationHandler's own "blank = keep/generate" convention.
+func UpdateIntegrationHandler(state *appstate.State) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		conn := state.DB()
+		userID := c.MustGet("user_id").(int64)
+		id := c.Param("id")
+
+		var req createIntegrationRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request"})
+			return
+		}
+
+		var merchantID *int64
+		if req.MerchantUUID != nil && *req.MerchantUUID != "" {
+			var mID int64
+			if err := conn.QueryRow(`SELECT id FROM merchant WHERE uuid = ?`, *req.MerchantUUID).Scan(&mID); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "merchant_not_found"})
+				return
+			}
+			merchantID = &mID
+		} else if !req.IsGlobal {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "merchant_required_unless_global"})
+			return
+		}
+
+		configBytes, _ := json.Marshal(webhookConfig{Name: req.Name, URL: req.URL, Events: req.Events})
+		if req.Secret != "" {
+			if _, err := conn.Exec(`UPDATE integration SET config = ?, secret_hash = ?, is_global = ? WHERE id = ? AND type = 'webhook'`, string(configBytes), req.Secret, req.IsGlobal, id); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
+				return
+			}
+		} else {
+			if _, err := conn.Exec(`UPDATE integration SET config = ?, is_global = ? WHERE id = ? AND type = 'webhook'`, string(configBytes), req.IsGlobal, id); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
+				return
+			}
+		}
+
+		conn.Exec(`DELETE FROM integration_merchant WHERE integration_id = ?`, id)
+		if merchantID != nil {
+			conn.Exec(`INSERT INTO integration_merchant (integration_id, merchant_id) VALUES (?, ?)`, id, *merchantID)
+		}
+
+		audit.Log(conn, audit.Entry{MerchantID: merchantID, UserID: &userID, Category: "integration", Message: "webhook integration updated: " + req.Name, StatusCode: 200, Source: "web", IPAddress: c.ClientIP()})
+		c.JSON(http.StatusOK, gin.H{"ok": true})
 	}
 }
 

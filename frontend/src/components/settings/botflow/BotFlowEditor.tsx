@@ -128,7 +128,7 @@ export function BotFlowEditor({ existing }: { existing?: BotFlow }) {
         await apiPost("/api/bot-flows", payload);
       }
       message.success("Bot flow saved");
-      router.push("/settings");
+      router.push("/settings/bot");
     } catch (err) {
       message.error(err instanceof ApiError ? err.message : "Could not save bot flow");
     } finally {

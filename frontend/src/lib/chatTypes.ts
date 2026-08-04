@@ -41,3 +41,16 @@ export function appendMessage(prev: ChatMessage[], next: ChatMessage): ChatMessa
   if (prev.some((m) => m.id === next.id)) return prev;
   return [...prev, next].sort((a, b) => a.id - b.id);
 }
+
+// A Canned Message / Automation greeting inserted with "Insert as HTML"
+// carries that flag through into the sent message's metadata (same
+// convention already used for quick_reply options and file attachments)
+// so a plain-text message still renders exactly as it always has.
+export function messageIsHtml(message: ChatMessage): boolean {
+  if (!message.metadata) return false;
+  try {
+    return Boolean(JSON.parse(message.metadata).isHtml);
+  } catch {
+    return false;
+  }
+}

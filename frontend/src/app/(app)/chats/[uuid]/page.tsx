@@ -8,8 +8,9 @@ import { useParams } from "next/navigation";
 import { apiFetch, apiGet, apiPost } from "@/lib/api";
 import { useSocket } from "@/lib/socket";
 import { confirmAction } from "@/components/modals/confirm";
-import { STATUS_COLOR, appendMessage, type ChatMessage, type ChatSummary } from "@/lib/chatTypes";
+import { STATUS_COLOR, appendMessage, messageIsHtml, type ChatMessage, type ChatSummary } from "@/lib/chatTypes";
 import { titleCase } from "@/lib/format";
+import { sanitizeHtml } from "@/lib/sanitizeHtml";
 import type { CannedMessage } from "@/lib/automationTypes";
 
 export default function ChatConversationPage() {
@@ -18,6 +19,7 @@ export default function ChatConversationPage() {
   const [chat, setChat] = useState<ChatSummary | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
+  const [draftIsHtml, setDraftIsHtml] = useState(false);
   const [sending, setSending] = useState(false);
   const [cannedMessages, setCannedMessages] = useState<CannedMessage[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -58,9 +60,10 @@ export default function ChatConversationPage() {
     if (!draft.trim()) return;
     setSending(true);
     try {
-      const sent = await apiPost<ChatMessage>(`/api/chats/${uuid}/messages`, { body: draft });
+      const sent = await apiPost<ChatMessage>(`/api/chats/${uuid}/messages`, { body: draft, isHtml: draftIsHtml });
       setMessages((prev) => appendMessage(prev, sent));
       setDraft("");
+      setDraftIsHtml(false);
     } catch {
       antMessage.error("Could not send message");
     } finally {
@@ -153,7 +156,10 @@ export default function ChatConversationPage() {
               items: cannedMessages.map((cm) => ({ key: cm.id, label: cm.title })),
               onClick: ({ key }) => {
                 const cm = cannedMessages.find((c) => String(c.id) === key);
-                if (cm) setDraft(cm.body);
+                if (cm) {
+                  setDraft(cm.body);
+                  setDraftIsHtml(cm.is_html);
+                }
               },
             }}
           >
@@ -161,7 +167,10 @@ export default function ChatConversationPage() {
           </Dropdown>
           <Input
             value={draft}
-            onChange={(e) => setDraft(e.target.value)}
+            onChange={(e) => {
+              setDraft(e.target.value);
+              setDraftIsHtml(false);
+            }}
             onPressEnter={send}
             placeholder={isClosed ? "This chat is closed" : "Type a message"}
             disabled={isClosed || !canReply}
@@ -175,13 +184,20 @@ export default function ChatConversationPage() {
   );
 }
 
+function MessageText({ message }: { message: ChatMessage }) {
+  if (messageIsHtml(message)) {
+    return <span dangerouslySetInnerHTML={{ __html: sanitizeHtml(message.body) }} />;
+  }
+  return <span>{message.body}</span>;
+}
+
 function MessageBubble({ message }: { message: ChatMessage }) {
   if (message.sender_type === "system" || message.sender_type === "bot") {
     return (
       <div className="flex justify-center">
         <div className="max-w-md rounded-lg bg-neutral-50 px-3 py-1 text-center text-xs text-neutral-500 dark:bg-neutral-800/50 dark:text-neutral-400">
           {message.sender_type === "bot" ? "🤖 " : ""}
-          {message.type === "file" ? <FileAttachment message={message} /> : message.body}
+          {message.type === "file" ? <FileAttachment message={message} /> : <MessageText message={message} />}
         </div>
       </div>
     );
@@ -195,7 +211,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
           isVisitor ? "bg-neutral-100 dark:bg-neutral-800" : "bg-blue-500 text-white"
         }`}
       >
-        {message.type === "file" ? <FileAttachment message={message} /> : <span>{message.body}</span>}
+        {message.type === "file" ? <FileAttachment message={message} /> : <MessageText message={message} />}
       </div>
     </div>
   );

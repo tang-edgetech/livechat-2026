@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"mime/multipart"
@@ -16,6 +17,7 @@ import (
 
 	"livechat/backend/internal/appstate"
 	"livechat/backend/internal/audit"
+	"livechat/backend/internal/htmlguard"
 	"livechat/backend/internal/settings"
 	"livechat/backend/internal/storage"
 	"livechat/backend/internal/webhook"
@@ -391,7 +393,8 @@ func CloseChatHandler(state *appstate.State, hub *ws.Hub) gin.HandlerFunc {
 }
 
 type sendMessageRequest struct {
-	Body string `json:"body" binding:"required"`
+	Body   string `json:"body" binding:"required"`
+	IsHtml bool   `json:"isHtml"`
 }
 
 // SendMessageHandler: the Agent side of "AJAX POST is broadcast to the
@@ -423,14 +426,25 @@ func SendMessageHandler(state *appstate.State, hub *ws.Hub) gin.HandlerFunc {
 			c.JSON(http.StatusForbidden, gin.H{"error": "not_the_assigned_agent"})
 			return
 		}
+		if req.IsHtml && htmlguard.IsDangerous(req.Body) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "html_not_allowed"})
+			return
+		}
 
-		msgID, createdAt, err := insertMessage(conn, ref.ID, "agent", &userID, req.Body, "text", nil)
+		var metadata *string
+		if req.IsHtml {
+			raw, _ := json.Marshal(map[string]bool{"isHtml": true})
+			s := string(raw)
+			metadata = &s
+		}
+
+		msgID, createdAt, err := insertMessage(conn, ref.ID, "agent", &userID, req.Body, "text", metadata)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
 			return
 		}
 
-		out := messageOut{ID: msgID, ChatUUID: c.Param("uuid"), SenderType: "agent", Body: req.Body, Type: "text", CreatedAt: createdAt}
+		out := messageOut{ID: msgID, ChatUUID: c.Param("uuid"), SenderType: "agent", Body: req.Body, Type: "text", CreatedAt: createdAt, Metadata: metadata}
 		hub.Publish(ws.VisitorSubject(ref.VisitorID), ws.Event{Type: "message", Data: out})
 		notifyChatUpdated(conn, hub, ref.MerchantID, c.Param("uuid"))
 

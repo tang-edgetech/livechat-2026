@@ -20,6 +20,8 @@ export function EmbedSection({
 }) {
   const [embedType, setEmbedType] = useState<"widget" | "page">("widget");
   const [newOrigin, setNewOrigin] = useState("");
+  const [bulkAdding, setBulkAdding] = useState(false);
+  const [bulkOrigins, setBulkOrigins] = useState("");
 
   const origin = typeof window !== "undefined" ? window.location.origin : "";
   const widgetSnippet = `<script src="${origin}/embed.js" data-merchant-code="${code}" async></script>`;
@@ -38,6 +40,19 @@ export function EmbedSection({
 
   function removeOrigin(value: string) {
     onConfigChange({ ...config, allowedOrigins: (config.allowedOrigins ?? []).filter((o) => o !== value) });
+  }
+
+  function addOriginsBulk() {
+    const parsed = bulkOrigins
+      .split(/[\n,]/)
+      .map((o) => o.trim())
+      .filter(Boolean);
+    if (parsed.length === 0) return;
+    const existing = config.allowedOrigins ?? [];
+    const merged = [...existing, ...parsed.filter((o) => !existing.includes(o))];
+    onConfigChange({ ...config, allowedOrigins: merged });
+    setBulkOrigins("");
+    setBulkAdding(false);
   }
 
   return (
@@ -95,10 +110,26 @@ export function EmbedSection({
           </Typography.Text>
         ))}
       </Space>
-      <Space.Compact style={{ maxWidth: 360 }}>
-        <Input placeholder="https://example.com" value={newOrigin} onChange={(e) => setNewOrigin(e.target.value)} onPressEnter={addOrigin} />
-        <Button onClick={addOrigin}>Add</Button>
-      </Space.Compact>
+      <Space wrap>
+        <Space.Compact style={{ maxWidth: 360 }}>
+          <Input placeholder="https://example.com" value={newOrigin} onChange={(e) => setNewOrigin(e.target.value)} onPressEnter={addOrigin} />
+          <Button onClick={addOrigin}>Add</Button>
+        </Space.Compact>
+        <Button onClick={() => setBulkAdding((v) => !v)}>{bulkAdding ? "Cancel bulk add" : "Add Multiple"}</Button>
+      </Space>
+      {bulkAdding && (
+        <Space orientation="vertical" style={{ width: "100%", maxWidth: 480 }}>
+          <Input.TextArea
+            rows={4}
+            placeholder={"One per line, or comma-separated —\nhttps://example.com\nhttps://shop.example.com"}
+            value={bulkOrigins}
+            onChange={(e) => setBulkOrigins(e.target.value)}
+          />
+          <Button type="primary" onClick={addOriginsBulk}>
+            Add All
+          </Button>
+        </Space>
+      )}
     </Space>
   );
 }

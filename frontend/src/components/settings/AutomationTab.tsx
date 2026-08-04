@@ -9,6 +9,7 @@ import dayjs from "dayjs";
 import { apiDelete, apiGet, apiPatch, apiPost, ApiError } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { confirmAction } from "@/components/modals/confirm";
+import { sanitizeHtml } from "@/lib/sanitizeHtml";
 import type { AutomationRule, ConditionSet } from "@/lib/automationTypes";
 import type { Merchant } from "@/lib/types";
 
@@ -31,6 +32,7 @@ export function AutomationTab() {
   const [useTimeCondition, setUseTimeCondition] = useState(false);
   const [timeRange, setTimeRange] = useState<[Dayjs, Dayjs] | null>(null);
   const [messageText, setMessageText] = useState("");
+  const [isHtml, setIsHtml] = useState(false);
   const [isGlobal, setIsGlobal] = useState(false);
   const [merchantUuid, setMerchantUuid] = useState<string | undefined>(undefined);
   const [submitting, setSubmitting] = useState(false);
@@ -67,6 +69,7 @@ export function AutomationTab() {
     setEditingId(null);
     setName("");
     setMessageText("");
+    setIsHtml(false);
     setUsePageCondition(false);
     setUseTimeCondition(false);
     setPageContains("");
@@ -80,6 +83,7 @@ export function AutomationTab() {
     setEditingId(rule.id);
     setName(rule.name);
     setMessageText(rule.message);
+    setIsHtml(rule.is_html);
     setIsGlobal(rule.is_global);
     setMerchantUuid(rule.merchant_uuid ?? undefined);
     setUsePageCondition(false);
@@ -132,21 +136,23 @@ export function AutomationTab() {
         name,
         condition: rules.length ? JSON.stringify(condition) : "",
         message: messageText,
+        isHtml,
         isGlobal,
         isActive: true,
         merchantUuid: isGlobal ? undefined : merchantUuid,
       };
       if (editingId) {
         await apiPatch(`/api/automation-rules/${editingId}`, payload);
-        message.success("Automation rule updated");
+        message.success("Greeting rule updated");
       } else {
         await apiPost("/api/automation-rules", payload);
-        message.success("Automation rule created");
+        message.success("Greeting rule created");
       }
       setCreating(false);
       setEditingId(null);
       setName("");
       setMessageText("");
+      setIsHtml(false);
       setUsePageCondition(false);
       setUseTimeCondition(false);
       setPageContains("");
@@ -161,7 +167,7 @@ export function AutomationTab() {
 
   function remove(id: number) {
     confirmAction({
-      title: "Delete this automation rule?",
+      title: "Delete this greeting rule?",
       okText: "Delete",
       danger: true,
       onConfirm: async () => {
@@ -182,11 +188,11 @@ export function AutomationTab() {
       {!creating ? (
         <div>
           <Button type="primary" onClick={startCreate}>
-            Create Automation Rule
+            Create Greeting Rule
           </Button>
         </div>
       ) : (
-        <Card title={editingId ? "Edit automation rule" : "New automation rule"}>
+        <Card title={editingId ? "Edit greeting rule" : "New greeting rule"}>
           <Space orientation="vertical" style={{ width: "100%", maxWidth: 480 }}>
             <Input placeholder="Rule name (for your reference)" value={name} onChange={(e) => setName(e.target.value)} />
 
@@ -215,6 +221,18 @@ export function AutomationTab() {
               value={messageText}
               onChange={(e) => setMessageText(e.target.value)}
             />
+            <Checkbox checked={isHtml} onChange={(e) => setIsHtml(e.target.checked)}>
+              Insert As HTML (allows formatting and inline styles, e.g. <code>&lt;b&gt;</code>,{" "}
+              <code>style=&quot;color:red&quot;</code> — sanitized before display)
+            </Checkbox>
+            {isHtml && messageText.trim() && (
+              <div>
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  Preview:
+                </Typography.Text>
+                <div className="rounded border px-2 py-1" dangerouslySetInnerHTML={{ __html: sanitizeHtml(messageText) }} />
+              </div>
+            )}
 
             {isSuperAdmin && (
               <Checkbox checked={isGlobal} onChange={(e) => setIsGlobal(e.target.checked)}>
@@ -252,7 +270,12 @@ export function AutomationTab() {
           {
             title: "Scope",
             key: "scope",
-            render: (_, r) => (r.is_global ? <Tag color="blue">Global</Tag> : <Tag>Merchant</Tag>),
+            render: (_, r) => (
+              <Space>
+                {r.is_global ? <Tag color="blue">Global</Tag> : <Tag>Merchant</Tag>}
+                {r.is_html && <Tag color="purple">HTML</Tag>}
+              </Space>
+            ),
           },
           {
             title: "Actions",

@@ -196,7 +196,7 @@ export function AuditLogsTab() {
           value={userUuid}
           onChange={setUserUuid}
           optionFilterProp="label"
-          options={users.map((u) => ({ value: u.uuid, label: `${u.display_name} (${u.username})` }))}
+          options={users.map((u) => ({ value: u.uuid, label: `${u.display_name} (${u.email})` }))}
         />
         <Input
           placeholder="Status code"

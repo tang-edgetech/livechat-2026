@@ -7,6 +7,7 @@ import { DeleteOutlined, EditOutlined, PlusOutlined } from "@ant-design/icons";
 import { apiDelete, apiGet, apiPatch, apiPost, ApiError } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { confirmAction } from "@/components/modals/confirm";
+import { sanitizeHtml } from "@/lib/sanitizeHtml";
 import type { CannedMessage } from "@/lib/automationTypes";
 import type { Merchant } from "@/lib/types";
 
@@ -22,6 +23,7 @@ export function CannedMessagesTab() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
+  const [isHtml, setIsHtml] = useState(false);
   const [isGlobal, setIsGlobal] = useState(false);
   const [merchantUuid, setMerchantUuid] = useState<string | undefined>(undefined);
   const [submitting, setSubmitting] = useState(false);
@@ -46,6 +48,7 @@ export function CannedMessagesTab() {
     setEditingId(null);
     setTitle("");
     setBody("");
+    setIsHtml(false);
     setIsGlobal(false);
     setMerchantUuid(undefined);
     setCreating(true);
@@ -55,6 +58,7 @@ export function CannedMessagesTab() {
     setEditingId(item.id);
     setTitle(item.title);
     setBody(item.body);
+    setIsHtml(item.is_html);
     setIsGlobal(item.is_global);
     setMerchantUuid(item.merchant_uuid ?? undefined);
     setCreating(true);
@@ -71,7 +75,7 @@ export function CannedMessagesTab() {
     }
     setSubmitting(true);
     try {
-      const payload = { title, body, isGlobal, merchantUuid: isGlobal ? undefined : merchantUuid };
+      const payload = { title, body, isHtml, isGlobal, merchantUuid: isGlobal ? undefined : merchantUuid };
       if (editingId) {
         await apiPatch(`/api/canned-messages/${editingId}`, payload);
         message.success("Canned message updated");
@@ -122,6 +126,21 @@ export function CannedMessagesTab() {
               <Space orientation="vertical" style={{ width: "100%", maxWidth: 480 }}>
                 <Input placeholder="Title (e.g. Greeting)" value={title} onChange={(e) => setTitle(e.target.value)} />
                 <Input.TextArea rows={3} placeholder="Message text" value={body} onChange={(e) => setBody(e.target.value)} />
+                <Checkbox checked={isHtml} onChange={(e) => setIsHtml(e.target.checked)}>
+                  Insert As HTML (allows formatting and inline styles, e.g. <code>&lt;b&gt;</code>,{" "}
+                  <code>style=&quot;color:red&quot;</code> — sanitized before display)
+                </Checkbox>
+                {isHtml && body.trim() && (
+                  <div>
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      Preview:
+                    </Typography.Text>
+                    <div
+                      className="rounded border px-2 py-1"
+                      dangerouslySetInnerHTML={{ __html: sanitizeHtml(body) }}
+                    />
+                  </div>
+                )}
                 {isSuperAdmin && (
                   <Checkbox checked={isGlobal} onChange={(e) => setIsGlobal(e.target.checked)}>
                     Apply to all merchants
@@ -158,7 +177,12 @@ export function CannedMessagesTab() {
           {
             title: "Scope",
             key: "scope",
-            render: (_, r) => (r.is_global ? <Tag color="blue">Global</Tag> : <Tag>Merchant</Tag>),
+            render: (_, r) => (
+              <Space>
+                {r.is_global ? <Tag color="blue">Global</Tag> : <Tag>Merchant</Tag>}
+                {r.is_html && <Tag color="purple">HTML</Tag>}
+              </Space>
+            ),
           },
           ...(canManage
             ? [

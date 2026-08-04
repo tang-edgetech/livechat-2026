@@ -100,7 +100,7 @@ export default function ProfilePage() {
               <Input.Password />
             </Form.Item>
             <Typography.Text type="secondary" style={{ display: "block", marginBottom: 16 }}>
-              Minimum 10 characters, no other rules.
+              8-16 characters, at least one uppercase letter and one digit. Symbols optional.
             </Typography.Text>
             <Button type="primary" htmlType="submit" loading={savingPassword}>
               Save

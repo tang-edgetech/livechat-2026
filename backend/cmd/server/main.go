@@ -137,6 +137,7 @@ func main() {
 		users.GET("", handlers.ListUsersHandler(state))
 		users.POST("", handlers.CreateUserHandler(state))
 		users.PATCH("/:uuid/status", handlers.SetUserStatusHandler(state))
+		users.PATCH("/bulk-status", handlers.BulkSetUserStatusHandler(state))
 		users.POST("/:uuid/force-password", handlers.ForcePasswordHandler(state))
 		users.POST("/:uuid/merchants", handlers.GrantUserMerchantHandler(state))
 		users.DELETE("/:uuid/merchants/:merchantUuid", handlers.RevokeUserMerchantHandler(state))
@@ -181,7 +182,9 @@ func main() {
 
 		integrations := authed.Group("/integrations")
 		integrations.GET("", staffOnly, handlers.ListIntegrationsHandler(state))
+		integrations.GET("/:id", middleware.RequireRole("super_admin"), handlers.GetIntegrationHandler(state))
 		integrations.POST("", middleware.RequireRole("super_admin"), handlers.CreateIntegrationHandler(state))
+		integrations.PATCH("/:id", middleware.RequireRole("super_admin"), handlers.UpdateIntegrationHandler(state))
 		integrations.DELETE("/:id", middleware.RequireRole("super_admin"), handlers.DeleteIntegrationHandler(state))
 		integrations.POST("/:id/test", middleware.RequireRole("super_admin"), handlers.TestIntegrationHandler(state))
 

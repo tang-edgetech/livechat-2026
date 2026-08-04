@@ -17,6 +17,7 @@ import (
 	"livechat/backend/internal/audit"
 	"livechat/backend/internal/config"
 	appdb "livechat/backend/internal/db"
+	"livechat/backend/internal/password"
 	"livechat/backend/internal/redisclient"
 )
 
@@ -133,7 +134,7 @@ type finishRequest struct {
 		WSPort      string `json:"wsPort" binding:"required"`
 	} `json:"site" binding:"required"`
 	Admin struct {
-		Username        string `json:"username" binding:"required"`
+		FullName        string `json:"fullName" binding:"required"`
 		Email           string `json:"email" binding:"required"`
 		Password        string `json:"password" binding:"required"`
 		ConfirmPassword string `json:"confirmPassword" binding:"required"`
@@ -155,11 +156,8 @@ func FinishHandler(cfg *config.Config, envPath string, state *appstate.State) gi
 			c.JSON(http.StatusBadRequest, gin.H{"error": "password_mismatch"})
 			return
 		}
-		// NIST-aligned policy (overview.md §9): min length only, no forced
-		// composition rules. A breached-password blocklist check belongs
-		// here too once that list is wired up (not part of Phase 0).
-		if len(req.Admin.Password) < 10 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "password_too_short", "detail": "minimum 10 characters"})
+		if err := password.Validate(req.Admin.Password); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "password_invalid", "detail": "8-16 characters, at least one uppercase letter and one digit"})
 			return
 		}
 
@@ -208,12 +206,16 @@ func FinishHandler(cfg *config.Config, envPath string, state *appstate.State) gi
 
 		adminUUID := uuid.New().String()
 		_, err = conn.Exec(
-			`INSERT INTO user (uuid, role_id, display_name, username, email, password_hash, status)
-			 VALUES (?, 1, ?, ?, ?, ?, 'active')`,
-			adminUUID, req.Admin.Username, req.Admin.Username, req.Admin.Email, string(passwordHash),
+			`INSERT INTO user (uuid, role_id, display_name, email, password_hash, status)
+			 VALUES (?, 1, ?, ?, ?, 'active')`,
+			adminUUID, req.Admin.FullName, req.Admin.Email, string(passwordHash),
 		)
 		if err != nil {
 			conn.Close()
+			if strings.Contains(err.Error(), "Duplicate entry") {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "email_taken"})
+				return
+			}
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "create_super_admin_failed", "detail": err.Error()})
 			return
 		}
@@ -243,7 +245,7 @@ func FinishHandler(cfg *config.Config, envPath string, state *appstate.State) gi
 			return
 		}
 
-		audit.Log(conn, audit.Entry{Category: "setup", Message: "setup wizard completed, super admin created: " + req.Admin.Username, StatusCode: 200, Source: "web", IPAddress: c.ClientIP()})
+		audit.Log(conn, audit.Entry{Category: "setup", Message: "setup wizard completed, super admin created: " + req.Admin.FullName, StatusCode: 200, Source: "web", IPAddress: c.ClientIP()})
 
 		// Publish the now-configured connection so /api/auth/* works
 		// immediately, with no process restart required.

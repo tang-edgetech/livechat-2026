@@ -9,7 +9,6 @@ import { apiGet, apiPost, ApiError } from "@/lib/api";
 import type { Merchant } from "@/lib/types";
 
 type FormValues = {
-  username: string;
   email: string;
   displayName: string;
   password: string;
@@ -37,7 +36,7 @@ export default function CreateUserPage() {
         role: isSuperAdmin ? values.role : "agent",
       });
       message.success("User created");
-      router.push("/settings");
+      router.push("/settings/users");
     } catch (err) {
       message.error(err instanceof ApiError ? err.message : "Could not create user");
     } finally {
@@ -48,16 +47,18 @@ export default function CreateUserPage() {
   return (
     <Card title="Create User" style={{ maxWidth: 480 }}>
       <Form layout="vertical" onFinish={handleSubmit} disabled={submitting}>
-        <Form.Item name="displayName" label="Display name" rules={[{ required: true }]}>
+        <Form.Item name="displayName" label="Full Name" rules={[{ required: true }]}>
           <Input />
         </Form.Item>
-        <Form.Item name="username" label="Username" rules={[{ required: true }]}>
+        <Form.Item name="email" label="Email Address" rules={[{ required: true, type: "email" }]}>
           <Input />
         </Form.Item>
-        <Form.Item name="email" label="Email" rules={[{ required: true, type: "email" }]}>
-          <Input />
-        </Form.Item>
-        <Form.Item name="password" label="Password" rules={[{ required: true }]} extra="Minimum 10 characters.">
+        <Form.Item
+          name="password"
+          label="Password"
+          rules={[{ required: true }]}
+          extra="8-16 characters, at least one uppercase letter and one digit. Symbols optional."
+        >
           <Input.Password />
         </Form.Item>
 

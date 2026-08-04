@@ -35,7 +35,7 @@ type SiteConfig = {
   appPort: string;
   wsPort: string;
 };
-type AdminConfig = { username: string; email: string; password: string; confirmPassword: string };
+type AdminConfig = { fullName: string; email: string; password: string; confirmPassword: string };
 
 export default function SetupWizardPage() {
   const router = useRouter();
@@ -64,7 +64,7 @@ export default function SetupWizardPage() {
   });
 
   const [admin, setAdmin] = useState<AdminConfig>({
-    username: "",
+    fullName: "",
     email: "",
     password: "",
     confirmPassword: "",
@@ -118,8 +118,8 @@ export default function SetupWizardPage() {
       setFinishError("Passwords do not match.");
       return;
     }
-    if (admin.password.length < 10) {
-      setFinishError("Password must be at least 10 characters.");
+    if (admin.password.length < 8 || admin.password.length > 16 || !/[A-Z]/.test(admin.password) || !/[0-9]/.test(admin.password)) {
+      setFinishError("Password must be 8-16 characters with at least one uppercase letter and one digit.");
       return;
     }
     setFinishing(true);
@@ -272,9 +272,9 @@ export default function SetupWizardPage() {
         {step === 3 && (
           <Space orientation="vertical" style={{ width: "100%" }}>
             <LabeledInput
-              label="Username"
-              value={admin.username}
-              onChange={(v) => setAdmin({ ...admin, username: v })}
+              label="Full Name"
+              value={admin.fullName}
+              onChange={(v) => setAdmin({ ...admin, fullName: v })}
             />
             <LabeledInput
               label="Email"
@@ -293,12 +293,12 @@ export default function SetupWizardPage() {
               value={admin.confirmPassword}
               onChange={(v) => setAdmin({ ...admin, confirmPassword: v })}
             />
-            <Typography.Text type="secondary">Minimum 10 characters, no other rules.</Typography.Text>
+            <Typography.Text type="secondary">8-16 characters, at least one uppercase letter and one digit. Symbols optional.</Typography.Text>
             <Space>
               <Button onClick={() => setStep(2)}>Back</Button>
               <Button
                 type="primary"
-                disabled={!admin.username || !admin.email || !admin.password}
+                disabled={!admin.fullName || !admin.email || !admin.password}
                 onClick={() => setStep(4)}
               >
                 Next
@@ -315,7 +315,7 @@ export default function SetupWizardPage() {
               </Descriptions.Item>
               <Descriptions.Item label="Site">{site.title}</Descriptions.Item>
               <Descriptions.Item label="Super Admin">
-                {admin.username} ({admin.email})
+                {admin.fullName} ({admin.email})
               </Descriptions.Item>
             </Descriptions>
             {finishError && <Alert type="error" showIcon title={finishError} />}

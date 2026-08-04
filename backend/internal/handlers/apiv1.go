@@ -56,6 +56,14 @@ func CreateChatV1Handler(state *appstate.State, hub *ws.Hub, redisClient *redis.
 			return
 		}
 
+		// Same resumption fix as StartChatHandler — a caller that
+		// repeatedly resolves the same identity should reconnect to
+		// their existing open chat, not spawn a new one each time.
+		if existing, err := findOpenChat(conn, v.ID); err == nil {
+			c.JSON(http.StatusOK, gin.H{"chatUuid": existing.uuid, "visitorUuid": v.UUID, "status": existing.status})
+			return
+		}
+
 		chatUUID := uuid.New().String()
 		result, err := conn.Exec(
 			`INSERT INTO chat (uuid, merchant_id, visitor_id, status) VALUES (?, ?, ?, 'pending')`,

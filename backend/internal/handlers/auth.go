@@ -19,8 +19,8 @@ type loginRequest struct {
 	Password string `json:"password" binding:"required"`
 }
 
-// LoginHandler authenticates by username OR email + password, per
-// overview.md §4.1 ("Login is username/email + password only").
+// LoginHandler authenticates by email + password (overview.md §4.1 —
+// username was dropped; email is the sole login identifier now).
 func LoginHandler(state *appstate.State) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		conn := state.DB()
@@ -36,8 +36,8 @@ func LoginHandler(state *appstate.State) gin.HandlerFunc {
 			status       string
 		)
 		err := conn.QueryRow(
-			`SELECT id, password_hash, status FROM user WHERE username = ? OR email = ?`,
-			req.Login, req.Login,
+			`SELECT id, password_hash, status FROM user WHERE email = ?`,
+			req.Login,
 		).Scan(&id, &passwordHash, &status)
 
 		if err == sql.ErrNoRows {

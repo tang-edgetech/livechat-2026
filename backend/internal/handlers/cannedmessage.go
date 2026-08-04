@@ -7,6 +7,7 @@ import (
 
 	"livechat/backend/internal/appstate"
 	"livechat/backend/internal/audit"
+	"livechat/backend/internal/htmlguard"
 )
 
 type cannedMessageOut struct {
@@ -14,6 +15,7 @@ type cannedMessageOut struct {
 	Title        string  `json:"title"`
 	Body         string  `json:"body"`
 	IsGlobal     bool    `json:"is_global"`
+	IsHtml       bool    `json:"is_html"`
 	MerchantUUID *string `json:"merchant_uuid"`
 }
 
@@ -32,7 +34,7 @@ func ListCannedMessagesHandler(state *appstate.State) gin.HandlerFunc {
 			return
 		}
 		placeholders, args := int64SliceToPlaceholders(merchantIDs)
-		query := `SELECT DISTINCT cm.id, cm.title, cm.body, cm.is_global, m.uuid
+		query := `SELECT DISTINCT cm.id, cm.title, cm.body, cm.is_global, cm.is_html, m.uuid
 		          FROM canned_message cm
 		          LEFT JOIN canned_message_merchant cmm ON cmm.canned_message_id = cm.id
 		          LEFT JOIN merchant m ON m.id = cmm.merchant_id
@@ -52,7 +54,7 @@ func ListCannedMessagesHandler(state *appstate.State) gin.HandlerFunc {
 		out := []cannedMessageOut{}
 		for rows.Next() {
 			var m cannedMessageOut
-			if err := rows.Scan(&m.ID, &m.Title, &m.Body, &m.IsGlobal, &m.MerchantUUID); err != nil {
+			if err := rows.Scan(&m.ID, &m.Title, &m.Body, &m.IsGlobal, &m.IsHtml, &m.MerchantUUID); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
 				return
 			}
@@ -66,6 +68,7 @@ type saveCannedMessageRequest struct {
 	Title        string  `json:"title" binding:"required"`
 	Body         string  `json:"body" binding:"required"`
 	IsGlobal     bool    `json:"isGlobal"`
+	IsHtml       bool    `json:"isHtml"`
 	MerchantUUID *string `json:"merchantUuid"`
 }
 
@@ -84,6 +87,10 @@ func CreateCannedMessageHandler(state *appstate.State) gin.HandlerFunc {
 			c.JSON(http.StatusForbidden, gin.H{"error": "only_super_admin_can_create_global"})
 			return
 		}
+		if req.IsHtml && htmlguard.IsDangerous(req.Body) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "html_not_allowed"})
+			return
+		}
 
 		var merchantID *int64
 		if req.MerchantUUID != nil && *req.MerchantUUID != "" {
@@ -99,8 +106,8 @@ func CreateCannedMessageHandler(state *appstate.State) gin.HandlerFunc {
 		}
 
 		result, err := conn.Exec(
-			`INSERT INTO canned_message (title, body, is_global, created_by) VALUES (?, ?, ?, ?)`,
-			req.Title, req.Body, req.IsGlobal, userID,
+			`INSERT INTO canned_message (title, body, is_global, is_html, created_by) VALUES (?, ?, ?, ?, ?)`,
+			req.Title, req.Body, req.IsGlobal, req.IsHtml, userID,
 		)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
@@ -134,6 +141,10 @@ func UpdateCannedMessageHandler(state *appstate.State) gin.HandlerFunc {
 			c.JSON(http.StatusForbidden, gin.H{"error": "only_super_admin_can_create_global"})
 			return
 		}
+		if req.IsHtml && htmlguard.IsDangerous(req.Body) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "html_not_allowed"})
+			return
+		}
 
 		var merchantID *int64
 		if req.MerchantUUID != nil && *req.MerchantUUID != "" {
@@ -148,7 +159,7 @@ func UpdateCannedMessageHandler(state *appstate.State) gin.HandlerFunc {
 			return
 		}
 
-		if _, err := conn.Exec(`UPDATE canned_message SET title = ?, body = ?, is_global = ? WHERE id = ?`, req.Title, req.Body, req.IsGlobal, id); err != nil {
+		if _, err := conn.Exec(`UPDATE canned_message SET title = ?, body = ?, is_global = ?, is_html = ? WHERE id = ?`, req.Title, req.Body, req.IsGlobal, req.IsHtml, id); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
 			return
 		}

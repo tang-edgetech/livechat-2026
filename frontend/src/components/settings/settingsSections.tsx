@@ -36,7 +36,7 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
     label: "Conversations",
     items: [
       { key: "canned-messages", label: "Canned Messages", Component: CannedMessagesTab },
-      { key: "automation", label: "Automation", Component: AutomationTab, staffOnly: true },
+      { key: "automation", label: "Greeting Rules", Component: AutomationTab, staffOnly: true },
       { key: "bot", label: "Bot", Component: BotTab, staffOnly: true },
     ],
   },

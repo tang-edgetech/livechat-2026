@@ -8,6 +8,7 @@ import (
 
 	"livechat/backend/internal/appstate"
 	"livechat/backend/internal/audit"
+	"livechat/backend/internal/password"
 )
 
 type updateProfileRequest struct {
@@ -53,8 +54,8 @@ func ChangePasswordHandler(state *appstate.State) gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request"})
 			return
 		}
-		if len(req.NewPassword) < 10 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "password_too_short", "detail": "minimum 10 characters"})
+		if err := password.Validate(req.NewPassword); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "password_invalid", "detail": "8-16 characters, at least one uppercase letter and one digit"})
 			return
 		}
 

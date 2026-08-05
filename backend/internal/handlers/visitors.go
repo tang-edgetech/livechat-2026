@@ -15,6 +15,7 @@ type visitorOut struct {
 	DisplayName  string  `json:"display_name"`
 	Phone        *string `json:"phone"`
 	Email        *string `json:"email"`
+	Tier         string  `json:"tier"`
 	MerchantName string  `json:"merchant_name"`
 }
 
@@ -37,7 +38,7 @@ func ListVisitorsHandler(state *appstate.State) gin.HandlerFunc {
 		}
 		placeholders, args := int64SliceToPlaceholders(merchantIDs)
 
-		query := `SELECT v.uuid, v.display_name, v.phone, v.email, m.name
+		query := `SELECT v.uuid, v.display_name, v.phone, v.email, v.tier, m.name
 		          FROM visitor v JOIN merchant m ON m.id = v.merchant_id
 		          WHERE v.merchant_id IN (` + placeholders + `) AND v.merged_into_id IS NULL`
 		if search := c.Query("search"); search != "" {
@@ -57,7 +58,7 @@ func ListVisitorsHandler(state *appstate.State) gin.HandlerFunc {
 		out := []visitorOut{}
 		for rows.Next() {
 			var v visitorOut
-			if err := rows.Scan(&v.UUID, &v.DisplayName, &v.Phone, &v.Email, &v.MerchantName); err != nil {
+			if err := rows.Scan(&v.UUID, &v.DisplayName, &v.Phone, &v.Email, &v.Tier, &v.MerchantName); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
 				return
 			}
@@ -68,11 +69,17 @@ func ListVisitorsHandler(state *appstate.State) gin.HandlerFunc {
 }
 
 type updateVisitorRequest struct {
-	Email string `json:"email" binding:"required"`
+	Email *string `json:"email"`
+	// Tier is the manual-staff-tagging channel from overview.md §6.9.1 —
+	// the always-available fallback alongside the trusted
+	// passthrough/API-key signal handled in visitor.Resolve.
+	Tier *string `json:"tier"`
 }
 
 // UpdateVisitorHandler: Admin/Super Admin force-correcting a Visitor's
-// email (e.g. a typo) — overview.md §10.3, always audit-logged.
+// email (e.g. a typo) and/or setting their Normal/VIP tier — overview.md
+// §10.3/§6.9.1, always audit-logged. Both fields are optional so this one
+// endpoint serves either edit independently.
 func UpdateVisitorHandler(state *appstate.State) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		conn := state.DB()
@@ -85,6 +92,10 @@ func UpdateVisitorHandler(state *appstate.State) gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request"})
 			return
 		}
+		if req.Tier != nil && *req.Tier != "normal" && *req.Tier != "vip" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_tier"})
+			return
+		}
 
 		merchantID, err := visitorMerchantInScope(conn, role, userID, visitorUUID)
 		if err != nil {
@@ -92,14 +103,27 @@ func UpdateVisitorHandler(state *appstate.State) gin.HandlerFunc {
 			return
 		}
 
-		if _, err := conn.Exec(`UPDATE visitor SET email = ? WHERE uuid = ?`, req.Email, visitorUUID); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
-			return
+		var messages []string
+		if req.Email != nil {
+			if _, err := conn.Exec(`UPDATE visitor SET email = ? WHERE uuid = ?`, *req.Email, visitorUUID); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
+				return
+			}
+			messages = append(messages, "email corrected")
 		}
-		audit.Log(conn, audit.Entry{
-			MerchantID: &merchantID, UserID: &userID, Category: "visitor",
-			Message: "visitor email corrected", StatusCode: 200, Source: "web", IPAddress: c.ClientIP(),
-		})
+		if req.Tier != nil {
+			if _, err := conn.Exec(`UPDATE visitor SET tier = ? WHERE uuid = ?`, *req.Tier, visitorUUID); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
+				return
+			}
+			messages = append(messages, "tier set to "+*req.Tier)
+		}
+		for _, msg := range messages {
+			audit.Log(conn, audit.Entry{
+				MerchantID: &merchantID, UserID: &userID, Category: "visitor",
+				Message: "visitor " + msg, StatusCode: 200, Source: "web", IPAddress: c.ClientIP(),
+			})
+		}
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	}
 }

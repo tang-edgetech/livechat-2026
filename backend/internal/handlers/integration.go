@@ -76,12 +76,13 @@ func ListIntegrationsHandler(state *appstate.State) gin.HandlerFunc {
 }
 
 type createIntegrationRequest struct {
-	Name         string   `json:"name" binding:"required"`
-	URL          string   `json:"url" binding:"required"`
-	Secret       string   `json:"secret"`
-	IsGlobal     bool     `json:"isGlobal"`
-	MerchantUUID *string  `json:"merchantUuid"`
-	Events       []string `json:"events"`
+	Name         string            `json:"name" binding:"required"`
+	URL          string            `json:"url" binding:"required"`
+	Secret       string            `json:"secret"`
+	IsGlobal     bool              `json:"isGlobal"`
+	MerchantUUID *string           `json:"merchantUuid"`
+	Events       []string          `json:"events"`
+	Headers      map[string]string `json:"headers"`
 }
 
 // CreateIntegrationHandler is Super Admin only — see the package comment.
@@ -116,7 +117,7 @@ func CreateIntegrationHandler(state *appstate.State) gin.HandlerFunc {
 			secret = hex.EncodeToString(secretBytes)
 		}
 
-		configBytes, _ := json.Marshal(webhookConfig{Name: req.Name, URL: req.URL, Events: req.Events})
+		configBytes, _ := json.Marshal(webhookConfig{Name: req.Name, URL: req.URL, Events: req.Events, Headers: req.Headers})
 		result, err := conn.Exec(
 			`INSERT INTO integration (type, config, secret_hash, is_global) VALUES ('webhook', ?, ?, ?)`,
 			string(configBytes), secret, req.IsGlobal,
@@ -136,12 +137,13 @@ func CreateIntegrationHandler(state *appstate.State) gin.HandlerFunc {
 }
 
 type integrationDetailOut struct {
-	ID           int64    `json:"id"`
-	Name         string   `json:"name"`
-	URL          string   `json:"url"`
-	IsGlobal     bool     `json:"isGlobal"`
-	MerchantUUID *string  `json:"merchantUuid"`
-	Events       []string `json:"events,omitempty"`
+	ID           int64             `json:"id"`
+	Name         string            `json:"name"`
+	URL          string            `json:"url"`
+	IsGlobal     bool              `json:"isGlobal"`
+	MerchantUUID *string           `json:"merchantUuid"`
+	Events       []string          `json:"events,omitempty"`
+	Headers      map[string]string `json:"headers,omitempty"`
 }
 
 // GetIntegrationHandler — Super Admin only, backs the edit form. Unlike
@@ -169,7 +171,7 @@ func GetIntegrationHandler(state *appstate.State) gin.HandlerFunc {
 
 		id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
 		c.JSON(http.StatusOK, integrationDetailOut{
-			ID: id, Name: cfg.Name, URL: cfg.URL, IsGlobal: isGlobal, MerchantUUID: merchantUUID, Events: cfg.Events,
+			ID: id, Name: cfg.Name, URL: cfg.URL, IsGlobal: isGlobal, MerchantUUID: merchantUUID, Events: cfg.Events, Headers: cfg.Headers,
 		})
 	}
 }
@@ -203,7 +205,7 @@ func UpdateIntegrationHandler(state *appstate.State) gin.HandlerFunc {
 			return
 		}
 
-		configBytes, _ := json.Marshal(webhookConfig{Name: req.Name, URL: req.URL, Events: req.Events})
+		configBytes, _ := json.Marshal(webhookConfig{Name: req.Name, URL: req.URL, Events: req.Events, Headers: req.Headers})
 		if req.Secret != "" {
 			if _, err := conn.Exec(`UPDATE integration SET config = ?, secret_hash = ?, is_global = ? WHERE id = ? AND type = 'webhook'`, string(configBytes), req.Secret, req.IsGlobal, id); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})

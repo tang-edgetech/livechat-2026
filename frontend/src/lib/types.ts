@@ -6,7 +6,7 @@ export type StaffUser = {
   status: "active" | "inactive" | "suspended";
   created_at: string;
   created_by_name: string | null;
-  merchants: { uuid: string; name: string }[];
+  merchants: { uuid: string; name: string; handles_vip: boolean }[];
 };
 
 export type Merchant = {

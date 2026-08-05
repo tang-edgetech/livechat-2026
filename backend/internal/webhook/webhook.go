@@ -25,6 +25,11 @@ type Config struct {
 	Name   string   `json:"name"`
 	URL    string   `json:"url"`
 	Events []string `json:"events"`
+	// Headers are extra request headers applied on top of the default
+	// Content-Type/Authorization when this connection is called from a
+	// Bot flow's call_integration step (overview.md §6.4) — a property
+	// of the system being called, set once here rather than per flow.
+	Headers map[string]string `json:"headers,omitempty"`
 }
 
 // Dispatch looks up every webhook integration in scope for merchantID

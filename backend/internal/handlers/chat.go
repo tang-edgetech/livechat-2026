@@ -28,6 +28,7 @@ type chatOut struct {
 	UUID          string     `json:"uuid"`
 	VisitorName   string     `json:"visitor_name"`
 	VisitorUUID   string     `json:"visitor_uuid"`
+	VisitorTier   string     `json:"visitor_tier"`
 	MerchantName  string     `json:"merchant_name"`
 	MerchantUUID  string     `json:"merchant_uuid"`
 	AgentName     *string    `json:"agent_name"`
@@ -101,7 +102,7 @@ func ListChatsHandler(state *appstate.State) gin.HandlerFunc {
 
 		placeholders, args := int64SliceToPlaceholders(merchantIDs)
 
-		query := `SELECT c.uuid, v.display_name, v.uuid, m.name, m.uuid,
+		query := `SELECT c.uuid, v.display_name, v.uuid, v.tier, m.name, m.uuid,
 		                 u.display_name, u.email, c.status, c.started_at, c.last_message_at
 		          FROM chat c
 		          JOIN visitor v ON v.id = c.visitor_id
@@ -158,7 +159,7 @@ func ListChatsHandler(state *appstate.State) gin.HandlerFunc {
 		out := []chatOut{}
 		for rows.Next() {
 			var ch chatOut
-			if err := rows.Scan(&ch.UUID, &ch.VisitorName, &ch.VisitorUUID, &ch.MerchantName, &ch.MerchantUUID,
+			if err := rows.Scan(&ch.UUID, &ch.VisitorName, &ch.VisitorUUID, &ch.VisitorTier, &ch.MerchantName, &ch.MerchantUUID,
 				&ch.AgentName, &ch.AgentEmail, &ch.Status, &ch.StartedAt, &ch.LastMessageAt); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
 				return
@@ -245,14 +246,14 @@ func GetChatHandler(state *appstate.State) gin.HandlerFunc {
 
 		var summary chatOut
 		if err := conn.QueryRow(
-			`SELECT c.uuid, v.display_name, v.uuid, m.name, m.uuid, u.display_name, u.email, c.status, c.started_at, c.last_message_at
+			`SELECT c.uuid, v.display_name, v.uuid, v.tier, m.name, m.uuid, u.display_name, u.email, c.status, c.started_at, c.last_message_at
 			 FROM chat c
 			 JOIN visitor v ON v.id = c.visitor_id
 			 JOIN merchant m ON m.id = c.merchant_id
 			 LEFT JOIN user u ON u.id = c.agent_id
 			 WHERE c.id = ?`,
 			ref.ID,
-		).Scan(&summary.UUID, &summary.VisitorName, &summary.VisitorUUID, &summary.MerchantName, &summary.MerchantUUID,
+		).Scan(&summary.UUID, &summary.VisitorName, &summary.VisitorUUID, &summary.VisitorTier, &summary.MerchantName, &summary.MerchantUUID,
 			&summary.AgentName, &summary.AgentEmail, &summary.Status, &summary.StartedAt, &summary.LastMessageAt); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
 			return

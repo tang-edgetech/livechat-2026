@@ -16,6 +16,7 @@ type Visitor struct {
 	DisplayName string
 	Phone       sql.NullString
 	Email       sql.NullString
+	Tier        string
 }
 
 var nonDigits = regexp.MustCompile(`\D`)
@@ -34,7 +35,13 @@ func NormalizePhone(raw string) string {
 //  4. if phone matches one row and email matches a *different* row, don't
 //     auto-merge — proceed with the phone-matched row and flag the
 //     conflict in audit_log for manual review (§10.3's merge tool).
-func Resolve(conn *sql.DB, merchantID int64, phoneRaw, email, displayName, fingerprint string) (*Visitor, error) {
+//
+// tier is empty unless the caller has a trusted signal (a signed
+// passthrough claim or an API-key-authenticated request — see §6.9.1);
+// an empty tier never touches an existing visitor's tier, so a same-
+// session anonymous call can't silently downgrade a VIP a human staffer
+// or an earlier trusted call already set.
+func Resolve(conn *sql.DB, merchantID int64, phoneRaw, email, displayName, fingerprint, tier string) (*Visitor, error) {
 	phone := NormalizePhone(phoneRaw)
 
 	var byPhone, byEmail *Visitor
@@ -53,30 +60,39 @@ func Resolve(conn *sql.DB, merchantID int64, phoneRaw, email, displayName, finge
 		}
 	}
 
+	var resolved *Visitor
 	if byPhone != nil && byEmail != nil && byPhone.ID != byEmail.ID {
 		audit.Log(conn, audit.Entry{
 			MerchantID: &merchantID, Category: "visitor_merge",
 			Message:    "possible duplicate: phone and email resolved to different visitors — proceeding with the phone match",
 			StatusCode: 200, Source: "system",
 		})
-		return byPhone, nil
-	}
-	if byPhone != nil {
-		return byPhone, nil
-	}
-	if byEmail != nil {
-		return byEmail, nil
+		resolved = byPhone
+	} else if byPhone != nil {
+		resolved = byPhone
+	} else if byEmail != nil {
+		resolved = byEmail
 	}
 
-	return create(conn, merchantID, phone, email, displayName, fingerprint)
+	if resolved != nil {
+		if tier != "" && tier != resolved.Tier {
+			if _, err := conn.Exec(`UPDATE visitor SET tier = ? WHERE id = ?`, tier, resolved.ID); err != nil {
+				return nil, err
+			}
+			resolved.Tier = tier
+		}
+		return resolved, nil
+	}
+
+	return create(conn, merchantID, phone, email, displayName, fingerprint, tier)
 }
 
 func findActive(conn *sql.DB, merchantID int64, column, value string) (*Visitor, error) {
-	query := `SELECT id, uuid, merchant_id, display_name, phone, email FROM visitor
+	query := `SELECT id, uuid, merchant_id, display_name, phone, email, tier FROM visitor
 	          WHERE merchant_id = ? AND ` + column + ` = ? AND merged_into_id IS NULL
 	          ORDER BY created_at ASC LIMIT 1`
 	var v Visitor
-	err := conn.QueryRow(query, merchantID, value).Scan(&v.ID, &v.UUID, &v.MerchantID, &v.DisplayName, &v.Phone, &v.Email)
+	err := conn.QueryRow(query, merchantID, value).Scan(&v.ID, &v.UUID, &v.MerchantID, &v.DisplayName, &v.Phone, &v.Email, &v.Tier)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -86,14 +102,17 @@ func findActive(conn *sql.DB, merchantID int64, column, value string) (*Visitor,
 	return &v, nil
 }
 
-func create(conn *sql.DB, merchantID int64, phone, email, displayName, fingerprint string) (*Visitor, error) {
+func create(conn *sql.DB, merchantID int64, phone, email, displayName, fingerprint, tier string) (*Visitor, error) {
 	if displayName == "" {
 		displayName = "Visitor"
 	}
+	if tier == "" {
+		tier = "normal"
+	}
 	newUUID := uuid.New().String()
 	result, err := conn.Exec(
-		`INSERT INTO visitor (uuid, merchant_id, display_name, phone, email, fingerprint) VALUES (?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''))`,
-		newUUID, merchantID, displayName, phone, email, fingerprint,
+		`INSERT INTO visitor (uuid, merchant_id, display_name, phone, email, fingerprint, tier) VALUES (?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), ?)`,
+		newUUID, merchantID, displayName, phone, email, fingerprint, tier,
 	)
 	if err != nil {
 		return nil, err
@@ -103,5 +122,6 @@ func create(conn *sql.DB, merchantID int64, phone, email, displayName, fingerpri
 		ID: id, UUID: newUUID, MerchantID: merchantID, DisplayName: displayName,
 		Phone: sql.NullString{String: phone, Valid: phone != ""},
 		Email: sql.NullString{String: email, Valid: email != ""},
+		Tier:  tier,
 	}, nil
 }

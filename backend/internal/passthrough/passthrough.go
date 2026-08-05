@@ -23,6 +23,12 @@ type Identity struct {
 	Phone      string `json:"phone"`
 	ExternalID string `json:"externalId"`
 	ExpiresAt  int64  `json:"expiresAt"`
+	// Tier is the "standard" a merchant's own site follows to flag a
+	// VIP customer (overview.md §6.9.1) — trusted only because it rides
+	// inside this same HMAC-signed payload. Per the product decision:
+	// the parked site sends "vip" for a VIP account and omits the field
+	// entirely for a normal one; anything else is treated as no signal.
+	Tier string `json:"tier,omitempty"`
 }
 
 var ErrInvalid = errors.New("invalid or expired passthrough token")

@@ -15,10 +15,11 @@ import {
   Typography,
   message,
 } from "antd";
-import { CheckCircleFilled, CloseCircleFilled } from "@ant-design/icons";
+import { CheckCircleFilled, CloseCircleFilled, MessageOutlined } from "@ant-design/icons";
 import { useRouter } from "next/navigation";
 
 import { apiGet, apiPost, ApiError } from "@/lib/api";
+import { THEME_PRIMARY } from "@/lib/theme";
 
 type CheckResult = { name: string; pass: boolean; note: string };
 
@@ -152,9 +153,16 @@ export default function SetupWizardPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-neutral-50 p-6 dark:bg-neutral-950">
+    <div
+      className="flex min-h-screen items-center justify-center p-6"
+      style={{ background: `radial-gradient(circle at 20% 20%, ${THEME_PRIMARY}14, transparent 45%), radial-gradient(circle at 80% 80%, #F59E0B14, transparent 45%)` }}
+    >
       <Card style={{ width: 640 }}>
-        <Typography.Title level={3}>LiveChat Setup</Typography.Title>
+        <div className="mb-1 flex items-center gap-2 text-lg font-semibold" style={{ color: THEME_PRIMARY }}>
+          <MessageOutlined />
+          LiveChat
+        </div>
+        <Typography.Title level={3}>Setup</Typography.Title>
         <Steps
           current={step}
           size="small"

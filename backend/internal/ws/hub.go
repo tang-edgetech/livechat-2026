@@ -127,11 +127,19 @@ func (h *Hub) Publish(subject string, event Event) {
 }
 
 // Conn wraps one client's websocket with a buffered send channel so the
-// hub never blocks (or panics on a concurrent write) while pushing to a
-// slow or half-closed client.
+// hub never blocks while pushing to a slow client. `closed`/`mu` guard
+// against the classic close-then-send race: deliverLocal snapshots a
+// connection list under Hub.mu, releases it, then calls Send on each —
+// ReadPump can close this same Conn (on disconnect) in that window. A
+// `select`+`default` alone does NOT protect against sending on an
+// already-closed channel (that always panics regardless of `default`),
+// so Send and close share this mutex instead.
 type Conn struct {
 	ws   *websocket.Conn
 	send chan []byte
+
+	mu     sync.Mutex
+	closed bool
 }
 
 func NewConn(ws *websocket.Conn) *Conn {
@@ -139,11 +147,26 @@ func NewConn(ws *websocket.Conn) *Conn {
 }
 
 func (c *Conn) Send(payload []byte) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return
+	}
 	select {
 	case c.send <- payload:
 	default:
 		log.Printf("ws: client send buffer full, dropping message")
 	}
+}
+
+func (c *Conn) close() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return
+	}
+	c.closed = true
+	close(c.send)
 }
 
 // WritePump owns all writes to the underlying socket — the only
@@ -164,7 +187,7 @@ func (c *Conn) WritePump() {
 // ping/pong control frames and so we detect a closed connection promptly.
 func (c *Conn) ReadPump(onClose func()) {
 	defer func() {
-		close(c.send)
+		c.close()
 		onClose()
 	}()
 	for {

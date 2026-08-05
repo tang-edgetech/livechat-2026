@@ -120,6 +120,7 @@ export default function ChatConversationPage() {
         <div className="flex items-center justify-between">
           <div>
             <Typography.Text strong>{chat.visitor_name}</Typography.Text>{" "}
+            {chat.visitor_tier === "vip" && <Tag color="gold">VIP</Tag>}
             <span className="text-neutral-500">· {chat.merchant_name}</span>{" "}
             <Tag color={STATUS_COLOR[chat.status]}>{titleCase(chat.status)}</Tag>
           </div>

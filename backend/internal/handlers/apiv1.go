@@ -13,7 +13,6 @@ import (
 	"livechat/backend/internal/appstate"
 	"livechat/backend/internal/botengine"
 	"livechat/backend/internal/ratelimit"
-	"livechat/backend/internal/routing"
 	"livechat/backend/internal/visitor"
 	"livechat/backend/internal/webhook"
 	"livechat/backend/internal/ws"
@@ -32,6 +31,11 @@ type createChatV1Request struct {
 	Phone       string `json:"phone" binding:"required"`
 	Email       string `json:"email"`
 	DisplayName string `json:"displayName"`
+	// Tier is trusted here because the whole request is already
+	// Bearer-API-key-authenticated to exactly one merchant (overview.md
+	// §6.9.1). Only the literal "vip" is meaningful — omit the field
+	// entirely for a normal customer.
+	Tier string `json:"tier"`
 }
 
 func CreateChatV1Handler(state *appstate.State, hub *ws.Hub, redisClient *redis.Client, limiter *ratelimit.Limiter) gin.HandlerFunc {
@@ -50,7 +54,11 @@ func CreateChatV1Handler(state *appstate.State, hub *ws.Hub, redisClient *redis.
 			return
 		}
 
-		v, err := visitor.Resolve(conn, merchantID, req.Phone, req.Email, req.DisplayName, c.ClientIP())
+		tier := ""
+		if req.Tier == "vip" {
+			tier = "vip"
+		}
+		v, err := visitor.Resolve(conn, merchantID, req.Phone, req.Email, req.DisplayName, c.ClientIP(), tier)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error", "detail": err.Error()})
 			return
@@ -78,26 +86,10 @@ func CreateChatV1Handler(state *appstate.State, hub *ws.Hub, redisClient *redis.
 		evalCtx := map[string]string{"page_url": "", "time_of_day": time.Now().Format("15:04")}
 		applyAutomationGreeting(conn, hub, chatID, merchantID, evalCtx)
 
-		botStarted, err := botengine.TryStart(context.Background(), conn, hub, redisClient, chatID, merchantID, evalCtx)
+		status, err := routeNewChat(context.Background(), conn, hub, redisClient, chatID, merchantID, v.Tier, evalCtx)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error", "detail": err.Error()})
 			return
-		}
-
-		status := "pending"
-		if !botStarted {
-			agentID, routedStatus, err := routing.Route(context.Background(), conn, redisClient, merchantID)
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error", "detail": err.Error()})
-				return
-			}
-			if _, err := conn.Exec(`UPDATE chat SET agent_id = ?, status = ? WHERE id = ?`, agentID, routedStatus, chatID); err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error", "detail": err.Error()})
-				return
-			}
-			status = routedStatus
-		} else {
-			conn.QueryRow(`SELECT status FROM chat WHERE id = ?`, chatID).Scan(&status)
 		}
 
 		notifyChatUpdated(conn, hub, merchantID, chatUUID)

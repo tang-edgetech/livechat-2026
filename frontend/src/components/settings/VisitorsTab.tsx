@@ -1,9 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { Button, Input, Select, Space, Table, Typography, message } from "antd";
+import { Button, Input, Select, Space, Table, Tag, Typography, message } from "antd";
 
-import { apiGet, apiPost, ApiError } from "@/lib/api";
+import { apiGet, apiPatch, apiPost, ApiError } from "@/lib/api";
 import { confirmAction } from "@/components/modals/confirm";
 
 type Visitor = {
@@ -11,6 +11,7 @@ type Visitor = {
   display_name: string;
   phone: string | null;
   email: string | null;
+  tier: "normal" | "vip";
   merchant_name: string;
 };
 
@@ -31,6 +32,26 @@ export function VisitorsTab() {
     apiGet<{ visitors: Visitor[] }>(`/api/visitors?search=${encodeURIComponent(q)}`)
       .then((res) => setVisitors(res.visitors))
       .finally(() => setLoading(false));
+  }
+
+  function toggleTier(v: Visitor) {
+    const nextTier = v.tier === "vip" ? "normal" : "vip";
+    confirmAction({
+      title: `Mark ${v.display_name} as ${nextTier === "vip" ? "VIP" : "Normal"}?`,
+      content:
+        nextTier === "vip"
+          ? "A new chat from this customer will route directly to an agent who handles VIP clients instead of the bot."
+          : "This customer goes back to the standard bot-first routing.",
+      onConfirm: async () => {
+        try {
+          await apiPatch(`/api/visitors/${v.uuid}`, { tier: nextTier });
+          message.success("Tier updated");
+          runSearch(search);
+        } catch (err) {
+          message.error(err instanceof ApiError ? err.message : "Could not update tier");
+        }
+      },
+    });
   }
 
   function merge() {
@@ -83,7 +104,21 @@ export function VisitorsTab() {
           { title: "Name", dataIndex: "display_name" },
           { title: "Phone", dataIndex: "phone", render: (v: string | null) => v ?? "—" },
           { title: "Email", dataIndex: "email", render: (v: string | null) => v ?? "—" },
+          {
+            title: "Tier",
+            dataIndex: "tier",
+            render: (t: Visitor["tier"]) => (t === "vip" ? <Tag color="gold">VIP</Tag> : <Tag>Normal</Tag>),
+          },
           { title: "Merchant", dataIndex: "merchant_name" },
+          {
+            title: "Actions",
+            key: "actions",
+            render: (_: unknown, r: Visitor) => (
+              <Button size="small" onClick={() => toggleTier(r)}>
+                {r.tier === "vip" ? "Mark as Normal" : "Mark as VIP"}
+              </Button>
+            ),
+          },
         ]}
       />
 

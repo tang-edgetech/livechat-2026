@@ -31,6 +31,7 @@ export type WebhookIntegrationDetail = {
   isGlobal: boolean;
   merchantUuid: string | null;
   events?: string[];
+  headers?: Record<string, string>;
 };
 
 export type ApiKey = {

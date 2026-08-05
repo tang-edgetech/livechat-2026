@@ -16,8 +16,9 @@ import (
 )
 
 type merchantMini struct {
-	UUID string `json:"uuid"`
-	Name string `json:"name"`
+	UUID       string `json:"uuid"`
+	Name       string `json:"name"`
+	HandlesVip bool   `json:"handles_vip"`
 }
 
 type userOut struct {
@@ -44,7 +45,7 @@ func merchantsByUserID(conn *sql.DB, userIDs []int64) (map[int64][]merchantMini,
 		placeholders[i] = "?"
 		args[i] = id
 	}
-	query := `SELECT um.user_id, m.uuid, m.name FROM user_merchant um
+	query := `SELECT um.user_id, m.uuid, m.name, um.handles_vip FROM user_merchant um
 	          JOIN merchant m ON m.id = um.merchant_id
 	          WHERE um.user_id IN (` + strings.Join(placeholders, ",") + `)`
 	rows, err := conn.Query(query, args...)
@@ -55,7 +56,7 @@ func merchantsByUserID(conn *sql.DB, userIDs []int64) (map[int64][]merchantMini,
 	for rows.Next() {
 		var userID int64
 		var m merchantMini
-		if err := rows.Scan(&userID, &m.UUID, &m.Name); err != nil {
+		if err := rows.Scan(&userID, &m.UUID, &m.Name, &m.HandlesVip); err != nil {
 			return nil, err
 		}
 		result[userID] = append(result[userID], m)
@@ -534,6 +535,76 @@ func RevokeUserMerchantHandler(state *appstate.State) gin.HandlerFunc {
 		}
 		audit.Log(conn, audit.Entry{
 			UserID: &actorID, Category: "user", Message: "merchant access revoked",
+			StatusCode: 200, Source: "web", IPAddress: c.ClientIP(),
+		})
+		c.JSON(http.StatusOK, gin.H{"ok": true})
+	}
+}
+
+type setHandlesVipRequest struct {
+	HandlesVip bool `json:"handlesVip"`
+}
+
+// SetHandlesVipHandler flags/unflags an Agent as one of the agents who
+// handles VIP clients for a given merchant (overview.md §6.9.1) — a
+// mutate-in-place toggle on the existing user_merchant grant, not a
+// separate grant/revoke.
+func SetHandlesVipHandler(state *appstate.State) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		conn := state.DB()
+		actorRole := c.MustGet("role").(string)
+		actorID := c.MustGet("user_id").(int64)
+
+		var req setHandlesVipRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request"})
+			return
+		}
+
+		targetID, targetRole, err := resolveTarget(conn, actorRole, actorID, c.Param("uuid"))
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+			return
+		}
+		if targetRole == "super_admin" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "super_admin_has_no_merchants"})
+			return
+		}
+
+		var merchantID int64
+		if err := conn.QueryRow(`SELECT id FROM merchant WHERE uuid = ?`, c.Param("merchantUuid")).Scan(&merchantID); err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "merchant_not_found"})
+			return
+		}
+
+		if actorRole == "admin" {
+			allowed, err := actorMerchantIDs(conn, actorID)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
+				return
+			}
+			if !allowed[merchantID] {
+				c.JSON(http.StatusForbidden, gin.H{"error": "merchant_not_held_by_actor"})
+				return
+			}
+		}
+
+		result, err := conn.Exec(
+			`UPDATE user_merchant SET handles_vip = ? WHERE user_id = ? AND merchant_id = ?`,
+			req.HandlesVip, targetID, merchantID,
+		)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
+			return
+		}
+		if n, _ := result.RowsAffected(); n == 0 {
+			c.JSON(http.StatusNotFound, gin.H{"error": "grant_not_found"})
+			return
+		}
+
+		audit.Log(conn, audit.Entry{
+			UserID: &actorID, Category: "user",
+			Message:    "handles-VIP set to " + strconv.FormatBool(req.HandlesVip),
 			StatusCode: 200, Source: "web", IPAddress: c.ClientIP(),
 		})
 		c.JSON(http.StatusOK, gin.H{"ok": true})

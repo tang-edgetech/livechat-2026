@@ -2,6 +2,16 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Card, Col, Row, Statistic, Typography } from "antd";
+import {
+  CommentOutlined,
+  LoginOutlined,
+  FileTextOutlined,
+  RiseOutlined,
+  RobotOutlined,
+  ShopOutlined,
+  TeamOutlined,
+} from "@ant-design/icons";
+import type { ReactNode } from "react";
 
 import { useAuth } from "@/context/AuthContext";
 import { apiGet } from "@/lib/api";
@@ -48,22 +58,41 @@ export default function DashboardPage() {
     <div className="flex flex-col gap-6">
       <Typography.Title level={3}>Welcome, {user?.display_name}</Typography.Title>
       <Row gutter={[16, 16]}>
-        <StatCard title="Online Agents" value={summary?.onlineAgents} />
-        <StatCard title="Active Chats" value={summary?.activeChats} />
-        <StatCard title="Entries" value={summary?.entries} />
-        <StatCard title="Records" value={summary?.records} />
-        <StatCard title="Traffic" value={summary?.traffic} />
-        <StatCard title="Merchants / Brands" value={summary?.merchants} />
-        <StatCard title="Bot Chats" value={summary?.botChats} />
+        <StatCard title="Online Agents" value={summary?.onlineAgents} icon={<TeamOutlined />} color="#10B981" />
+        <StatCard title="Active Chats" value={summary?.activeChats} icon={<CommentOutlined />} color="#3B82F6" />
+        <StatCard title="Entries" value={summary?.entries} icon={<LoginOutlined />} color="#8B5CF6" />
+        <StatCard title="Records" value={summary?.records} icon={<FileTextOutlined />} color="#F59E0B" />
+        <StatCard title="Traffic" value={summary?.traffic} icon={<RiseOutlined />} color="#06B6D4" />
+        <StatCard title="Merchants / Brands" value={summary?.merchants} icon={<ShopOutlined />} color="#EC4899" />
+        <StatCard title="Bot Chats" value={summary?.botChats} icon={<RobotOutlined />} color="#6C5CE7" />
       </Row>
     </div>
   );
 }
 
-function StatCard({ title, value }: { title: string; value: number | undefined }) {
+function StatCard({
+  title,
+  value,
+  icon,
+  color,
+}: {
+  title: string;
+  value: number | undefined;
+  icon: ReactNode;
+  color: string;
+}) {
   return (
     <Col xs={24} sm={12} md={8} lg={6}>
-      <Card>
+      <Card
+        className="transition-shadow hover:shadow-md"
+        styles={{ body: { display: "flex", alignItems: "center", gap: 14 } }}
+      >
+        <div
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-xl"
+          style={{ backgroundColor: `${color}1a`, color }}
+        >
+          {icon}
+        </div>
         <Statistic title={title} value={value ?? "—"} />
       </Card>
     </Col>

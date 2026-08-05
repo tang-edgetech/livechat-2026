@@ -325,14 +325,37 @@ function StepCard({
       )}
 
       {step.type === "call_integration" && (
-        <Select
-          placeholder="Which connection?"
-          style={{ width: "100%" }}
-          value={step.config.integrationId as number | undefined}
-          onChange={(v) => onChange({ config: { ...step.config, integrationId: v } })}
-          options={integrations.map((i) => ({ value: i.id, label: i.name }))}
-          notFoundContent="No connections set up yet — ask your Super Admin to add one in Settings > Integration."
-        />
+        <Space orientation="vertical" style={{ width: "100%" }}>
+          <Select
+            placeholder="Which connection?"
+            style={{ width: "100%" }}
+            value={step.config.integrationId as number | undefined}
+            onChange={(v) => onChange({ config: { ...step.config, integrationId: v } })}
+            options={integrations.map((i) => ({ value: i.id, label: i.name }))}
+            notFoundContent="No connections set up yet — ask your Super Admin to add one in Settings > Integration."
+          />
+          <Input
+            placeholder="Save response into variable (optional)"
+            value={step.config.saveResponseAs as string | undefined}
+            onChange={(e) => onChange({ config: { ...step.config, saveResponseAs: e.target.value } })}
+          />
+          <Input
+            placeholder="Extract from response path, e.g. data.answer (optional)"
+            value={step.config.responsePath as string | undefined}
+            onChange={(e) => onChange({ config: { ...step.config, responsePath: e.target.value } })}
+          />
+          <Checkbox
+            checked={step.config.sendAsMessage !== false}
+            onChange={(e) => onChange({ config: { ...step.config, sendAsMessage: e.target.checked } })}
+          >
+            Send response as a message to the visitor
+          </Checkbox>
+          <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 0 }}>
+            Saving a response into a variable also sets &quot;&lt;variable&gt;_ok&quot; to true/false based on
+            whether the call succeeded — branch on it with a Condition step to fall back to Handoff to Agent on
+            failure.
+          </Typography.Paragraph>
+        </Space>
       )}
 
       {(step.type === "handoff_to_agent" || step.type === "close_chat") && (

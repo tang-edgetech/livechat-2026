@@ -2,6 +2,7 @@ export type ChatSummary = {
   uuid: string;
   visitor_name: string;
   visitor_uuid: string;
+  visitor_tier: "normal" | "vip";
   merchant_name: string;
   merchant_uuid: string;
   agent_name: string | null;

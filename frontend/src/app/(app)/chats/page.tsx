@@ -153,7 +153,16 @@ export default function ChatsPage() {
               </Space>
             ),
           },
-          { title: "Customer", dataIndex: "visitor_name" },
+          {
+            title: "Customer",
+            dataIndex: "visitor_name",
+            render: (v: string, r: ChatSummary) => (
+              <Space>
+                {v}
+                {r.visitor_tier === "vip" && <Tag color="gold">VIP</Tag>}
+              </Space>
+            ),
+          },
           {
             title: "Timestamp",
             dataIndex: "last_message_at",

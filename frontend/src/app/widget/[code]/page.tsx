@@ -9,6 +9,7 @@ import { apiFetch, apiGet, apiPost, ApiError } from "@/lib/api";
 import { useSocket } from "@/lib/socket";
 import { appendMessage, messageIsHtml, type ChatMessage } from "@/lib/chatTypes";
 import { sanitizeHtml } from "@/lib/sanitizeHtml";
+import { THEME_PRIMARY } from "@/lib/theme";
 import type { WidgetConfig } from "@/lib/types";
 
 type Session = { chatUuid: string; visitorUuid: string };
@@ -79,7 +80,7 @@ export default function WidgetPage() {
     return () => window.removeEventListener("message", handleThemeMessage);
   }, [config.allowedOrigins]);
 
-  const accent = config.accentColor || "#1677ff";
+  const accent = config.accentColor || THEME_PRIMARY;
 
   if (loading) {
     return (
@@ -98,7 +99,10 @@ export default function WidgetPage() {
 
   return (
     <div className="flex h-screen flex-col bg-white dark:bg-neutral-900">
-      <div className="flex h-12 shrink-0 items-center px-4 text-white" style={{ backgroundColor: accent }}>
+      <div
+        className="flex h-14 shrink-0 items-center px-4 text-white shadow-sm"
+        style={{ background: `linear-gradient(135deg, ${accent}, ${accent}cc)` }}
+      >
         <span className="font-medium">{merchantName}</span>
       </div>
       {session ? (
@@ -252,7 +256,7 @@ function ChatWindow({ session, accent }: { session: Session; accent: string }) {
         {messages.map((m) => (
           <div key={m.id} className={`flex ${m.sender_type === "visitor" ? "justify-end" : "justify-start"}`}>
             <div
-              className="max-w-[75%] rounded-lg px-3 py-2"
+              className="max-w-[75%] rounded-2xl px-3.5 py-2 shadow-sm"
               style={
                 m.sender_type === "visitor"
                   ? { backgroundColor: accent, color: "#fff" }

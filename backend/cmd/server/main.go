@@ -141,6 +141,7 @@ func main() {
 		users.POST("/:uuid/force-password", handlers.ForcePasswordHandler(state))
 		users.POST("/:uuid/merchants", handlers.GrantUserMerchantHandler(state))
 		users.DELETE("/:uuid/merchants/:merchantUuid", handlers.RevokeUserMerchantHandler(state))
+		users.PATCH("/:uuid/merchants/:merchantUuid", handlers.SetHandlesVipHandler(state))
 
 		// Any staff role (agent/admin/super_admin) — chatAccess/scopedMerchantIDs
 		// inside each handler narrow further by merchant.
@@ -193,6 +194,7 @@ func main() {
 		apiKeys := authed.Group("/api-keys")
 		apiKeys.GET("", staffOnly, handlers.ListAPIKeysHandler(state))
 		apiKeys.POST("", middleware.RequireRole("super_admin"), handlers.CreateAPIKeyHandler(state))
+		apiKeys.POST("/:id/regenerate", middleware.RequireRole("super_admin"), handlers.RegenerateAPIKeyHandler(state))
 		apiKeys.DELETE("/:id", middleware.RequireRole("super_admin"), handlers.RevokeAPIKeyHandler(state))
 
 		botFlows := authed.Group("/bot-flows")

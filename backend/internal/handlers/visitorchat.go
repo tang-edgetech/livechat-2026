@@ -82,6 +82,44 @@ func findOpenChat(conn *sql.DB, visitorID int64) (*openChat, error) {
 	return &oc, nil
 }
 
+// routeNewChat decides and applies the initial agent_id/status for a
+// freshly-inserted chat — shared by StartChatHandler and
+// CreateChatV1Handler. A VIP visitor (overview.md §6.9.1) skips the bot
+// entirely and goes straight to routing.RouteVIP (which itself falls
+// back to the normal agent pool if no VIP-designated agent is online);
+// everyone else keeps the existing bot-first-then-round-robin path.
+func routeNewChat(ctx context.Context, conn *sql.DB, hub *ws.Hub, redisClient *redis.Client, chatID, merchantID int64, tier string, evalCtx map[string]string) (string, error) {
+	if tier == "vip" {
+		agentID, status, err := routing.RouteVIP(ctx, conn, redisClient, merchantID)
+		if err != nil {
+			return "", err
+		}
+		if _, err := conn.Exec(`UPDATE chat SET agent_id = ?, status = ? WHERE id = ?`, agentID, status, chatID); err != nil {
+			return "", err
+		}
+		return status, nil
+	}
+
+	botStarted, err := botengine.TryStart(ctx, conn, hub, redisClient, chatID, merchantID, evalCtx)
+	if err != nil {
+		return "", err
+	}
+	if !botStarted {
+		agentID, status, err := routing.Route(ctx, conn, redisClient, merchantID)
+		if err != nil {
+			return "", err
+		}
+		if _, err := conn.Exec(`UPDATE chat SET agent_id = ?, status = ? WHERE id = ?`, agentID, status, chatID); err != nil {
+			return "", err
+		}
+		return status, nil
+	}
+
+	var status string
+	conn.QueryRow(`SELECT status FROM chat WHERE id = ?`, chatID).Scan(&status)
+	return status, nil
+}
+
 func StartChatHandler(state *appstate.State, hub *ws.Hub, redisClient *redis.Client, limiter *ratelimit.Limiter) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		conn := state.DB()
@@ -104,6 +142,7 @@ func StartChatHandler(state *appstate.State, hub *ws.Hub, redisClient *redis.Cli
 		}
 
 		phone, email, displayName := req.Phone, req.Email, req.DisplayName
+		tier := ""
 		if req.PassthroughToken != "" {
 			// Logged-in visitor (§10.2) — never trust the payload until
 			// its HMAC verifies against this merchant's own secret.
@@ -113,6 +152,12 @@ func StartChatHandler(state *appstate.State, hub *ws.Hub, redisClient *redis.Cli
 				return
 			}
 			phone, email, displayName = identity.Phone, identity.Email, identity.Name
+			// §6.9.1: only an explicit "vip" claim inside this signed
+			// payload is a trusted signal — anything else (including a
+			// garbage value) is treated as no signal at all.
+			if identity.Tier == "vip" {
+				tier = "vip"
+			}
 		}
 		if phone == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "phone_required"})
@@ -128,7 +173,7 @@ func StartChatHandler(state *appstate.State, hub *ws.Hub, redisClient *redis.Cli
 			return
 		}
 
-		v, err := visitor.Resolve(conn, merchantID, phone, email, displayName, c.ClientIP())
+		v, err := visitor.Resolve(conn, merchantID, phone, email, displayName, c.ClientIP(), tier)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error", "detail": err.Error()})
 			return
@@ -166,26 +211,10 @@ func StartChatHandler(state *appstate.State, hub *ws.Hub, redisClient *redis.Cli
 		}
 		applyAutomationGreeting(conn, hub, chatID, merchantID, evalCtx)
 
-		botStarted, err := botengine.TryStart(context.Background(), conn, hub, redisClient, chatID, merchantID, evalCtx)
+		status, err := routeNewChat(context.Background(), conn, hub, redisClient, chatID, merchantID, v.Tier, evalCtx)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error", "detail": err.Error()})
 			return
-		}
-
-		status := "pending"
-		if !botStarted {
-			agentID, routedStatus, err := routing.Route(context.Background(), conn, redisClient, merchantID)
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error", "detail": err.Error()})
-				return
-			}
-			if _, err := conn.Exec(`UPDATE chat SET agent_id = ?, status = ? WHERE id = ?`, agentID, routedStatus, chatID); err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error", "detail": err.Error()})
-				return
-			}
-			status = routedStatus
-		} else {
-			conn.QueryRow(`SELECT status FROM chat WHERE id = ?`, chatID).Scan(&status)
 		}
 
 		notifyChatUpdated(conn, hub, merchantID, chatUUID)

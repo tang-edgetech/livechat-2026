@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Alert, Button, Card, Checkbox, Input, Select, Space, Table, Typography, message } from "antd";
-import { DeleteOutlined, EditOutlined, PlusOutlined } from "@ant-design/icons";
+import { DeleteOutlined, EditOutlined, PlusOutlined, ReloadOutlined } from "@ant-design/icons";
 
 import { apiDelete, apiGet, apiPatch, apiPost, ApiError } from "@/lib/api";
 import { confirmAction } from "@/components/modals/confirm";
@@ -30,6 +30,7 @@ export function IntegrationTab() {
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [secret, setSecret] = useState("");
+  const [headersText, setHeadersText] = useState("");
   const [isGlobal, setIsGlobal] = useState(false);
   const [merchantUuid, setMerchantUuid] = useState<string | undefined>(undefined);
   const [events, setEvents] = useState<string[]>([]);
@@ -44,6 +45,7 @@ export function IntegrationTab() {
   const [apiKeyMerchantUuid, setApiKeyMerchantUuid] = useState<string | undefined>(undefined);
   const [submittingApiKey, setSubmittingApiKey] = useState(false);
   const [newApiKey, setNewApiKey] = useState<string | null>(null);
+  const [regeneratingId, setRegeneratingId] = useState<number | null>(null);
 
   function load() {
     setLoading(true);
@@ -71,6 +73,7 @@ export function IntegrationTab() {
     setName("");
     setUrl("");
     setSecret("");
+    setHeadersText("");
     setIsGlobal(false);
     setMerchantUuid(undefined);
     setEvents([]);
@@ -86,6 +89,11 @@ export function IntegrationTab() {
       setName(detail.name);
       setUrl(detail.url);
       setSecret("");
+      setHeadersText(
+        Object.entries(detail.headers ?? {})
+          .map(([k, v]) => `${k}: ${v}`)
+          .join("\n"),
+      );
       setIsGlobal(detail.isGlobal);
       setMerchantUuid(detail.merchantUuid ?? undefined);
       setEvents(detail.events ?? []);
@@ -108,7 +116,15 @@ export function IntegrationTab() {
     }
     setSubmitting(true);
     try {
-      const payload = { name, url, secret, isGlobal, merchantUuid: isGlobal ? undefined : merchantUuid, events };
+      const headers: Record<string, string> = {};
+      for (const line of headersText.split("\n")) {
+        const idx = line.indexOf(":");
+        if (idx === -1) continue;
+        const key = line.slice(0, idx).trim();
+        const value = line.slice(idx + 1).trim();
+        if (key) headers[key] = value;
+      }
+      const payload = { name, url, secret, isGlobal, merchantUuid: isGlobal ? undefined : merchantUuid, events, headers };
       if (editingId) {
         await apiPatch(`/api/integrations/${editingId}`, payload);
         message.success("Connection updated");
@@ -176,6 +192,27 @@ export function IntegrationTab() {
     }
   }
 
+  function regenerateApiKey(id: number, name: string) {
+    confirmAction({
+      title: "Regenerate this API key?",
+      content: `The current secret for "${name}" will stop working immediately — any system still using it needs the new one.`,
+      okText: "Regenerate",
+      danger: true,
+      onConfirm: async () => {
+        setRegeneratingId(id);
+        try {
+          const res = await apiPost<{ apiKey: string }>(`/api/api-keys/${id}/regenerate`);
+          setNewApiKey(res.apiKey);
+          message.success("API key regenerated");
+        } catch (err) {
+          message.error(err instanceof ApiError ? err.message : "Could not regenerate API key");
+        } finally {
+          setRegeneratingId(null);
+        }
+      },
+    });
+  }
+
   function revokeApiKey(id: number) {
     confirmAction({
       title: "Revoke this API key?",
@@ -215,6 +252,19 @@ export function IntegrationTab() {
               {editingId && (
                 <Input placeholder="Leave blank to keep the existing secret" value={secret} onChange={(e) => setSecret(e.target.value)} />
               )}
+              <div>
+                <Typography.Text>Custom Headers (optional)</Typography.Text>
+                <Input.TextArea
+                  rows={3}
+                  placeholder={"One per line —\nX-Api-Version: 2\nX-Source: livechat"}
+                  value={headersText}
+                  onChange={(e) => setHeadersText(e.target.value)}
+                />
+                <Typography.Paragraph type="secondary" style={{ marginTop: 4, marginBottom: 0 }}>
+                  Sent on every Bot flow call to this connection, in addition to the automatic Content-Type and
+                  Authorization headers.
+                </Typography.Paragraph>
+              </div>
               <Checkbox checked={isGlobal} onChange={(e) => setIsGlobal(e.target.checked)}>
                 Apply to all merchants
               </Checkbox>
@@ -341,7 +391,18 @@ export function IntegrationTab() {
             {
               title: "Actions",
               key: "actions",
-              render: (_, r) => <Button type="text" danger icon={<DeleteOutlined />} onClick={() => revokeApiKey(r.id)} />,
+              render: (_, r) => (
+                <Space>
+                  <Button
+                    type="text"
+                    icon={<ReloadOutlined />}
+                    loading={regeneratingId === r.id}
+                    onClick={() => regenerateApiKey(r.id, r.name)}
+                    title="Regenerate"
+                  />
+                  <Button type="text" danger icon={<DeleteOutlined />} onClick={() => revokeApiKey(r.id)} />
+                </Space>
+              ),
             },
           ]}
         />

@@ -129,6 +129,42 @@ func CreateAPIKeyHandler(state *appstate.State) gin.HandlerFunc {
 	}
 }
 
+// RegenerateAPIKeyHandler rotates the secret on an existing key in place
+// (same name/merchant scope) — for a suspected-leaked key without having
+// to delete it and have every caller re-onboard a brand new key name.
+func RegenerateAPIKeyHandler(state *appstate.State) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		conn := state.DB()
+		userID := c.MustGet("user_id").(int64)
+		id := c.Param("id")
+
+		var configRaw string
+		if err := conn.QueryRow(`SELECT config FROM integration WHERE id = ? AND type = 'api_key'`, id).Scan(&configRaw); err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+			return
+		}
+		var cfg apiKeyConfig
+		json.Unmarshal([]byte(configRaw), &cfg)
+
+		keyBytes := make([]byte, 24)
+		if _, err := rand.Read(keyBytes); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
+			return
+		}
+		rawKey := "lc_" + hex.EncodeToString(keyBytes)
+		sum := sha256.Sum256([]byte(rawKey))
+		hash := hex.EncodeToString(sum[:])
+
+		if _, err := conn.Exec(`UPDATE integration SET secret_hash = ? WHERE id = ? AND type = 'api_key'`, hash, id); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
+			return
+		}
+
+		audit.Log(conn, audit.Entry{UserID: &userID, Category: "integration", Message: "API key regenerated: " + cfg.Name, StatusCode: 200, Source: "web", IPAddress: c.ClientIP()})
+		c.JSON(http.StatusOK, gin.H{"apiKey": rawKey})
+	}
+}
+
 func RevokeAPIKeyHandler(state *appstate.State) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		conn := state.DB()

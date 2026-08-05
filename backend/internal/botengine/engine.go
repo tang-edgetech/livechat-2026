@@ -13,6 +13,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -293,49 +295,166 @@ func (fc *flowContext) sendBotMessage(body, msgType string, metadata *string) {
 // generic outbound REST call, never a hardcoded vendor SDK. Best-effort —
 // a failed call posts a graceful fallback message instead of breaking
 // the conversation.
+// visitorSnapshot is the identity slice sent to an external system on
+// every call_integration request — enough for a CRM/AI service to
+// recognize the customer without exposing anything beyond what's already
+// on the visitor record.
+type visitorSnapshot struct {
+	UUID        string  `json:"uuid"`
+	DisplayName string  `json:"displayName"`
+	Phone       *string `json:"phone,omitempty"`
+	Email       *string `json:"email,omitempty"`
+}
+
+func (fc *flowContext) visitorSnapshot() visitorSnapshot {
+	var v visitorSnapshot
+	var phone, email sql.NullString
+	fc.conn.QueryRow(`SELECT uuid, display_name, phone, email FROM visitor WHERE id = ?`, fc.visitorID).
+		Scan(&v.UUID, &v.DisplayName, &phone, &email)
+	if phone.Valid {
+		v.Phone = &phone.String
+	}
+	if email.Valid {
+		v.Email = &email.String
+	}
+	return v
+}
+
+// callIntegration is the "AI"/third-party step (overview.md §6.4): a
+// generic outbound REST call, never a hardcoded vendor SDK. Best-effort —
+// a failed call posts a graceful fallback message instead of breaking
+// the conversation, unless sendAsMessage is explicitly turned off.
+//
+// A response can be captured into a bot variable (optionally extracted
+// via a dot/index path) — that's deliberately the *only* new mechanic
+// here. A flow branches on the outcome (including on the reserved
+// "<var>_ok" success flag) with the existing `condition` step rather than
+// this step inventing its own branching, matching the Live Helper Chat
+// research this was scoped down from (see overview.md §12 for what was
+// explicitly left out).
 func (fc *flowContext) callIntegration(node *Node) {
 	integrationID, ok := node.Config["integrationId"]
 	if !ok {
 		return
 	}
-	var url, secret string
-	if err := fc.conn.QueryRow(`SELECT config, secret_hash FROM integration WHERE id = ?`, integrationID).Scan(&url, &secret); err != nil {
-		fc.sendBotMessage("Sorry, that connection isn't set up correctly.", "text", nil)
+	sendAsMessage := true
+	if v, exists := node.Config["sendAsMessage"]; exists {
+		if b, isBool := v.(bool); isBool {
+			sendAsMessage = b
+		}
+	}
+	saveResponseAs, _ := node.Config["saveResponseAs"].(string)
+	responsePath, _ := node.Config["responsePath"].(string)
+
+	fail := func(msg string) {
+		if saveResponseAs != "" {
+			fc.variables[saveResponseAs+"_ok"] = "false"
+		}
+		if sendAsMessage {
+			fc.sendBotMessage(msg, "text", nil)
+		}
+	}
+
+	var configRaw, secret string
+	if err := fc.conn.QueryRow(`SELECT config, secret_hash FROM integration WHERE id = ?`, integrationID).Scan(&configRaw, &secret); err != nil {
+		fail("Sorry, that connection isn't set up correctly.")
 		return
 	}
 	var cfg struct {
-		URL string `json:"url"`
+		URL     string            `json:"url"`
+		Headers map[string]string `json:"headers"`
 	}
-	json.Unmarshal([]byte(url), &cfg)
+	json.Unmarshal([]byte(configRaw), &cfg)
 
+	visitor := fc.visitorSnapshot()
 	payload, _ := json.Marshal(map[string]any{
-		"chatUuid":  fc.chatUUID,
-		"variables": fc.variables,
+		"chatUuid":    fc.chatUUID,
+		"visitorUuid": visitor.UUID,
+		"visitor":     visitor,
+		"variables":   fc.variables,
 	})
 	req, err := http.NewRequest(http.MethodPost, cfg.URL, bytes.NewReader(payload))
 	if err != nil {
-		fc.sendBotMessage("Sorry, something went wrong reaching that system.", "text", nil)
+		fail("Sorry, something went wrong reaching that system.")
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+secret)
+	for k, v := range cfg.Headers {
+		req.Header.Set(k, v)
+	}
 
 	client := http.Client{Timeout: 8 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		fc.sendBotMessage("Sorry, something went wrong reaching that system.", "text", nil)
+		fail("Sorry, something went wrong reaching that system.")
 		return
 	}
 	defer resp.Body.Close()
 
-	var body struct {
-		Message string `json:"message"`
-	}
+	var body map[string]any
 	json.NewDecoder(resp.Body).Decode(&body)
-	if body.Message == "" {
-		body.Message = "(no response)"
+
+	var extracted any
+	if responsePath != "" {
+		extracted = resolvePath(body, responsePath)
+	} else if msg, exists := body["message"]; exists {
+		extracted = msg
 	}
-	fc.sendBotMessage(body.Message, "text", nil)
+
+	if saveResponseAs != "" {
+		fc.variables[saveResponseAs] = extracted
+		fc.variables[saveResponseAs+"_ok"] = strconv.FormatBool(resp.StatusCode >= 200 && resp.StatusCode < 300)
+	}
+
+	if sendAsMessage {
+		text := stringifyForMessage(extracted)
+		if text == "" {
+			text = "(no response)"
+		}
+		fc.sendBotMessage(text, "text", nil)
+	}
+}
+
+// resolvePath walks a decoded JSON value (map[string]any / []any) along a
+// "."-separated path (e.g. "data.answer" or "items.0.name") — the small
+// subset of Live Helper Chat's path-extraction idea that's actually
+// needed here (see overview.md §12 for what wasn't adopted).
+func resolvePath(data any, path string) any {
+	current := data
+	for _, segment := range strings.Split(path, ".") {
+		switch v := current.(type) {
+		case map[string]any:
+			current = v[segment]
+		case []any:
+			idx, err := strconv.Atoi(segment)
+			if err != nil || idx < 0 || idx >= len(v) {
+				return nil
+			}
+			current = v[idx]
+		default:
+			return nil
+		}
+	}
+	return current
+}
+
+// stringifyForMessage renders an extracted response value as visitor-
+// facing text: a plain string stays as-is, anything else (number, bool,
+// object, array) is JSON-encoded so it's at least visible rather than
+// silently dropped.
+func stringifyForMessage(v any) string {
+	if v == nil {
+		return ""
+	}
+	if s, ok := v.(string); ok {
+		return s
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }
 
 func (fc *flowContext) handoffToAgent(ctx context.Context) error {

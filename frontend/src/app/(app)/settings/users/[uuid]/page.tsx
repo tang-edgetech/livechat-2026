@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Button, Card, Col, Descriptions, Input, Row, Segmented, Select, Space, Typography, message } from "antd";
+import { Button, Card, Checkbox, Col, Descriptions, Input, Row, Segmented, Select, Space, Typography, message } from "antd";
 import { useParams } from "next/navigation";
 
 import { apiDelete, apiGet, apiPost, apiPatch, ApiError } from "@/lib/api";
@@ -87,6 +87,24 @@ export default function EditUserPage() {
     });
   }
 
+  function toggleHandlesVip(merchantUuid: string, merchantName: string, next: boolean) {
+    confirmAction({
+      title: next ? "Flag this agent as handling VIP clients?" : "Remove VIP-handling from this agent?",
+      content: next
+        ? `A VIP customer's chat for ${merchantName} will now try to route directly to this agent.`
+        : `This agent will no longer be a direct-routing target for ${merchantName}'s VIP customers.`,
+      onConfirm: async () => {
+        try {
+          await apiPatch(`/api/users/${uuid}/merchants/${merchantUuid}`, { handlesVip: next });
+          message.success("Updated");
+          load();
+        } catch (err) {
+          message.error(err instanceof ApiError ? err.message : "Could not update");
+        }
+      },
+    });
+  }
+
   function forcePassword() {
     if (newPassword.length < 8 || newPassword.length > 16 || !/[A-Z]/.test(newPassword) || !/[0-9]/.test(newPassword)) {
       message.error("Password must be 8-16 characters with at least one uppercase letter and one digit");
@@ -158,6 +176,27 @@ export default function EditUserPage() {
                 <Button type="primary" loading={savingMerchants} onClick={saveMerchants}>
                   Save
                 </Button>
+
+                {target.role === "agent" && target.merchants.length > 0 && (
+                  <div>
+                    <Typography.Text strong>Handles VIP</Typography.Text>
+                    <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 4 }}>
+                      A VIP customer&apos;s chat routes directly to one of the agents flagged here for that
+                      merchant, bypassing the bot.
+                    </Typography.Paragraph>
+                    <Space orientation="vertical">
+                      {target.merchants.map((m) => (
+                        <Checkbox
+                          key={m.uuid}
+                          checked={m.handles_vip}
+                          onChange={(e) => toggleHandlesVip(m.uuid, m.name, e.target.checked)}
+                        >
+                          {m.name}
+                        </Checkbox>
+                      ))}
+                    </Space>
+                  </div>
+                )}
               </Space>
             </Card>
           )}

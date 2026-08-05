@@ -7,7 +7,6 @@ import { useRouter } from "next/navigation";
 
 import { apiGet, apiPost, ApiError } from "@/lib/api";
 import { useAuth, type CurrentUser } from "@/context/AuthContext";
-import { THEME_PRIMARY } from "@/lib/theme";
 
 type LoginFormValues = {
   login: string;
@@ -38,15 +37,12 @@ export default function LoginPage() {
 
   return (
     <div className="flex h-screen items-stretch bg-neutral-50 dark:bg-neutral-950">
-      <div
-        className="hidden w-1/2 flex-col justify-center gap-4 px-16 text-white lg:flex"
-        style={{ background: `linear-gradient(135deg, ${THEME_PRIMARY}, #4338CA)` }}
-      >
-        <div className="flex items-center gap-2 text-2xl font-semibold">
+      <div className="hidden w-1/2 flex-col justify-center gap-4 bg-neutral-950 px-16 text-white lg:flex dark:bg-black">
+        <div className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
           <MessageOutlined />
           LiveChat
         </div>
-        <Typography.Paragraph style={{ color: "rgba(255,255,255,0.85)", fontSize: 16, maxWidth: 420 }}>
+        <Typography.Paragraph style={{ color: "rgba(255,255,255,0.65)", fontSize: 16, maxWidth: 420 }}>
           Real-time customer care for every brand you run — chat, automate, and route conversations from one panel.
         </Typography.Paragraph>
       </div>

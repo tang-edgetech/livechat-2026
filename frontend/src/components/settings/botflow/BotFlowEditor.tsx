@@ -1,13 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Button, Card, Checkbox, Input, Modal, Select, Space, Switch, Typography, message } from "antd";
+import { AutoComplete, Button, Card, Checkbox, Input, InputNumber, Modal, Segmented, Select, Space, Switch, Typography, message } from "antd";
 import { DeleteOutlined, PlusOutlined } from "@ant-design/icons";
 import { useRouter } from "next/navigation";
 
 import { apiGet, apiPost, apiPatch, ApiError } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
-import type { BotFlow, ConditionSet, TriggerDef } from "@/lib/automationTypes";
+import type { BotFlow, ConditionRule, ConditionSet, TriggerDef } from "@/lib/automationTypes";
 import type { Merchant } from "@/lib/types";
 import { FlowChartPreview } from "./FlowChartPreview";
 import { STEP_TYPES, newStepId, stepsToFlow, flowToSteps, type BuilderStep } from "./stepTypes";
@@ -17,6 +17,25 @@ const TEMPLATE: BuilderStep[] = [
   { id: "s2", type: "ask_question", config: { message: "And your email address?" } },
   { id: "s3", type: "send_message", config: { message: "Thanks! Connecting you to a member of our team now." } },
   { id: "s4", type: "handoff_to_agent", config: {} },
+];
+
+// Always available to reference in a Condition step alongside "answer_N"
+// (a captured question answer) — computed by the engine itself, nothing
+// to configure (overview.md §6.9.1/§12).
+const BUILT_IN_FIELDS = [
+  { value: "visitor_tier", label: "Visitor tier (Normal/VIP)" },
+  { value: "chat_duration_seconds", label: "Chat duration (seconds)" },
+];
+
+// Plain-language validation presets for "Ask a question" (overview.md
+// §6.0 — never a bare regex field by default) — "Custom pattern" is the
+// escape hatch for anyone who does want to hand-write one.
+const VALIDATION_PRESETS = [
+  { value: "", label: "Any answer" },
+  { value: "^[0-9]+$", label: "Numbers only" },
+  { value: "^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$", label: "Email address" },
+  { value: "^[0-9+\\-\\s()]{7,}$", label: "Phone number" },
+  { value: "custom", label: "Custom pattern..." },
 ];
 
 export function BotFlowEditor({ existing }: { existing?: BotFlow }) {
@@ -270,58 +289,11 @@ function StepCard({
       )}
 
       {step.type === "ask_question" && (
-        <Space orientation="vertical" style={{ width: "100%" }}>
-          <Input.TextArea
-            placeholder="Question to ask"
-            value={String(step.config.message ?? "")}
-            onChange={(e) => onChange({ config: { ...step.config, message: e.target.value, variable: `answer_${index}` } })}
-          />
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            The visitor&apos;s reply will be remembered as &quot;the answer to this question&quot;.
-          </Typography.Text>
-        </Space>
+        <AskQuestionFields step={step} index={index} steps={steps} onChange={onChange} />
       )}
 
       {step.type === "condition" && (
-        <Space orientation="vertical" style={{ width: "100%" }}>
-          <Select
-            placeholder="Check the answer to..."
-            style={{ width: "100%" }}
-            value={step.config.field as string | undefined}
-            onChange={(v) => onChange({ config: { ...step.config, field: v } })}
-            options={questionSteps
-              .filter((q) => steps.indexOf(q) < index)
-              .map((q, qi) => ({ value: `answer_${steps.indexOf(q)}`, label: `"${String(q.config.message ?? `Question ${qi + 1}`)}"` }))}
-          />
-          <Space>
-            <Select
-              placeholder="Condition"
-              style={{ width: 140 }}
-              value={step.config.operator as string | undefined}
-              onChange={(v) => onChange({ config: { ...step.config, operator: v } })}
-              options={[
-                { value: "contains", label: "contains" },
-                { value: "equals", label: "is exactly" },
-                { value: "not_equals", label: "is not" },
-              ]}
-            />
-            <Input
-              placeholder="value"
-              style={{ width: 160 }}
-              value={String(step.config.value ?? "")}
-              onChange={(e) => onChange({ config: { ...step.config, value: e.target.value } })}
-            />
-          </Space>
-          <Select
-            placeholder="If not matched, skip to step..."
-            style={{ width: "100%" }}
-            value={step.falseTarget}
-            onChange={(v) => onChange({ falseTarget: v })}
-            options={steps
-              .map((s, i) => ({ value: s.id, label: `Step ${i + 1}: ${STEP_TYPES.find((t) => t.type === s.type)?.label}` }))
-              .filter((_, i) => i !== index)}
-          />
-        </Space>
+        <ConditionFields step={step} index={index} steps={steps} questionSteps={questionSteps} onChange={onChange} />
       )}
 
       {step.type === "call_integration" && (
@@ -350,6 +322,12 @@ function StepCard({
           >
             Send response as a message to the visitor
           </Checkbox>
+          <Checkbox
+            checked={step.config.logToAuditLog === true}
+            onChange={(e) => onChange({ config: { ...step.config, logToAuditLog: e.target.checked } })}
+          >
+            Log the request &amp; response to Audit Logs (for debugging this connection)
+          </Checkbox>
           <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 0 }}>
             Saving a response into a variable also sets &quot;&lt;variable&gt;_ok&quot; to true/false based on
             whether the call succeeded — branch on it with a Condition step to fall back to Handoff to Agent on
@@ -362,5 +340,172 @@ function StepCard({
         <Typography.Text type="secondary">No extra setup needed for this step.</Typography.Text>
       )}
     </Card>
+  );
+}
+
+function stepTargetOptions(steps: BuilderStep[], excludeIndex: number) {
+  return steps
+    .map((s, i) => ({ value: s.id, label: `Step ${i + 1}: ${STEP_TYPES.find((t) => t.type === s.type)?.label}` }))
+    .filter((_, i) => i !== excludeIndex);
+}
+
+// Never a bare regex field by default (overview.md §6.0) — a plain-
+// language preset picker that resolves to a regex under the hood, with
+// "Custom pattern..." as the escape hatch. Retry limit + fail target only
+// appear once a format is actually required.
+function AskQuestionFields({
+  step,
+  index,
+  steps,
+  onChange,
+}: {
+  step: BuilderStep;
+  index: number;
+  steps: BuilderStep[];
+  onChange: (patch: Partial<BuilderStep>) => void;
+}) {
+  const pattern = (step.config.validationPattern as string | undefined) ?? "";
+  const knownPreset = VALIDATION_PRESETS.find((p) => p.value === pattern && p.value !== "custom");
+  const presetValue = pattern === "" ? "" : knownPreset ? knownPreset.value : "custom";
+
+  return (
+    <Space orientation="vertical" style={{ width: "100%" }}>
+      <Input.TextArea
+        placeholder="Question to ask"
+        value={String(step.config.message ?? "")}
+        onChange={(e) => onChange({ config: { ...step.config, message: e.target.value, variable: `answer_${index}` } })}
+      />
+      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+        The visitor&apos;s reply will be remembered as &quot;the answer to this question&quot;.
+      </Typography.Text>
+
+      <Typography.Text>Require a specific format?</Typography.Text>
+      <Select
+        style={{ width: "100%" }}
+        value={presetValue}
+        onChange={(v) => onChange({ config: { ...step.config, validationPattern: v === "custom" ? pattern || " " : v } })}
+        options={VALIDATION_PRESETS}
+      />
+      {presetValue === "custom" && (
+        <Input
+          placeholder="Custom regex pattern"
+          value={pattern}
+          onChange={(e) => onChange({ config: { ...step.config, validationPattern: e.target.value } })}
+        />
+      )}
+      {presetValue !== "" && (
+        <>
+          <InputNumber
+            style={{ width: "100%" }}
+            placeholder="Max retries before giving up (optional — blank = unlimited)"
+            min={1}
+            value={step.config.maxRetries as number | undefined}
+            onChange={(v) => onChange({ config: { ...step.config, maxRetries: v ?? undefined } })}
+          />
+          <Select
+            placeholder="If retries run out, skip to step..."
+            style={{ width: "100%" }}
+            value={step.config.retryFailNext as string | undefined}
+            onChange={(v) => onChange({ config: { ...step.config, retryFailNext: v } })}
+            options={stepTargetOptions(steps, index)}
+          />
+        </>
+      )}
+    </Space>
+  );
+}
+
+// Multi-rule AND/OR condition builder — the exact shape (ConditionSet:
+// {logic, rules}) already used by Greeting Rules'/Bot triggers' own page-
+// URL/time-of-day conditions, now also available mid-flow (overview.md
+// §12). A rule's field can be a captured question answer, a built-in
+// (visitor_tier/chat_duration_seconds), or any other variable name typed
+// directly (e.g. a call_integration saveResponseAs/"_ok" flag).
+function ConditionFields({
+  step,
+  index,
+  steps,
+  questionSteps,
+  onChange,
+}: {
+  step: BuilderStep;
+  index: number;
+  steps: BuilderStep[];
+  questionSteps: BuilderStep[];
+  onChange: (patch: Partial<BuilderStep>) => void;
+}) {
+  const legacyRule: ConditionRule[] =
+    step.config.field && !step.config.rules
+      ? [{ field: step.config.field as string, operator: (step.config.operator as string) ?? "contains", value: step.config.value }]
+      : [];
+  const rules: ConditionRule[] = (step.config.rules as ConditionRule[] | undefined) ?? legacyRule;
+  const logic = (step.config.logic as "and" | "or" | undefined) ?? "and";
+
+  const fieldOptions = [
+    ...questionSteps
+      .filter((q) => steps.indexOf(q) < index)
+      .map((q, qi) => ({ value: `answer_${steps.indexOf(q)}`, label: `"${String(q.config.message ?? `Question ${qi + 1}`)}"` })),
+    ...BUILT_IN_FIELDS,
+  ];
+
+  function updateRules(next: ConditionRule[]) {
+    onChange({ config: { ...step.config, rules: next, logic, field: undefined, operator: undefined, value: undefined } });
+  }
+
+  return (
+    <Space orientation="vertical" style={{ width: "100%" }}>
+      {rules.map((rule, ri) => (
+        <Space key={ri} wrap>
+          <AutoComplete
+            placeholder="Field (answer, visitor_tier, a variable...)"
+            style={{ width: 220 }}
+            value={rule.field}
+            options={fieldOptions}
+            onChange={(v) => updateRules(rules.map((r, i) => (i === ri ? { ...r, field: v } : r)))}
+          />
+          <Select
+            placeholder="Condition"
+            style={{ width: 140 }}
+            value={rule.operator}
+            onChange={(v) => updateRules(rules.map((r, i) => (i === ri ? { ...r, operator: v } : r)))}
+            options={[
+              { value: "contains", label: "contains" },
+              { value: "equals", label: "is exactly" },
+              { value: "not_equals", label: "is not" },
+            ]}
+          />
+          <Input
+            placeholder="value"
+            style={{ width: 160 }}
+            value={String(rule.value ?? "")}
+            onChange={(e) => updateRules(rules.map((r, i) => (i === ri ? { ...r, value: e.target.value } : r)))}
+          />
+          <Button type="text" danger icon={<DeleteOutlined />} onClick={() => updateRules(rules.filter((_, i) => i !== ri))} />
+        </Space>
+      ))}
+      <Space>
+        <Button size="small" onClick={() => updateRules([...rules, { field: "", operator: "contains", value: "" }])}>
+          + Add condition
+        </Button>
+        {rules.length > 1 && (
+          <Segmented
+            size="small"
+            value={logic}
+            onChange={(v) => onChange({ config: { ...step.config, logic: v as "and" | "or" } })}
+            options={[
+              { value: "and", label: "Match all (AND)" },
+              { value: "or", label: "Match any (OR)" },
+            ]}
+          />
+        )}
+      </Space>
+      <Select
+        placeholder="If not matched, skip to step..."
+        style={{ width: "100%" }}
+        value={step.falseTarget}
+        onChange={(v) => onChange({ falseTarget: v })}
+        options={stepTargetOptions(steps, index)}
+      />
+    </Space>
   );
 }

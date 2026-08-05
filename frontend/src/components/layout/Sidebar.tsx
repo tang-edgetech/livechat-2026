@@ -13,7 +13,6 @@ import { useRouter, usePathname } from "next/navigation";
 
 import { useAuth } from "@/context/AuthContext";
 import { confirmAction } from "@/components/modals/confirm";
-import { THEME_PRIMARY } from "@/lib/theme";
 
 // Sticky top-left sidebar, logo at top, nav flex-1 + scrollable with a
 // thin custom scrollbar, Logout pinned to the bottom (overview.md §6.0).
@@ -46,10 +45,7 @@ export function Sidebar() {
 
   return (
     <aside className="sticky top-0 flex h-screen w-60 flex-col border-r border-black/10 bg-white dark:border-white/10 dark:bg-neutral-900">
-      <div
-        className="flex h-16 shrink-0 items-center gap-2 px-5 text-lg font-semibold text-white"
-        style={{ background: `linear-gradient(135deg, ${THEME_PRIMARY}, #8477F0)` }}
-      >
+      <div className="flex h-16 shrink-0 items-center gap-2 border-b border-black/10 px-5 text-[15px] font-semibold tracking-tight dark:border-white/10">
         <MessageOutlined />
         LiveChat
       </div>

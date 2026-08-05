@@ -9,6 +9,7 @@ export type CurrentUser = {
   display_name: string;
   email: string;
   role: "super_admin" | "admin" | "agent";
+  theme_preference: string;
 };
 
 type AuthContextValue = {

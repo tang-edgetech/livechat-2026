@@ -34,20 +34,30 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
   {
     key: "conversations",
     label: "Conversations",
+    items: [{ key: "canned-messages", label: "Canned Messages", Component: CannedMessagesTab }],
+  },
+  {
+    key: "automation-group",
+    label: "Automation",
     items: [
-      { key: "canned-messages", label: "Canned Messages", Component: CannedMessagesTab },
       { key: "automation", label: "Greeting Rules", Component: AutomationTab, staffOnly: true },
-      { key: "bot", label: "Bot", Component: BotTab, staffOnly: true },
+      { key: "bot", label: "Flows", Component: BotTab, staffOnly: true },
     ],
   },
   {
     key: "team",
-    label: "Team & Merchants",
-    items: [
-      { key: "users", label: "Users", Component: UsersTab, staffOnly: true },
-      { key: "merchants", label: "Merchants", Component: MerchantsTab, staffOnly: true },
-      { key: "visitors", label: "Visitors", Component: VisitorsTab, staffOnly: true },
-    ],
+    label: "Team",
+    items: [{ key: "users", label: "Users", Component: UsersTab, staffOnly: true }],
+  },
+  {
+    key: "merchants",
+    label: "Merchants",
+    items: [{ key: "merchants", label: "Merchants", Component: MerchantsTab, staffOnly: true }],
+  },
+  {
+    key: "customers",
+    label: "Customers",
+    items: [{ key: "visitors", label: "Visitors", Component: VisitorsTab, staffOnly: true }],
   },
   {
     key: "integrations",

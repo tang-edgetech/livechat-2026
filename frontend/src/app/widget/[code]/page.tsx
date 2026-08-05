@@ -99,10 +99,7 @@ export default function WidgetPage() {
 
   return (
     <div className="flex h-screen flex-col bg-white dark:bg-neutral-900">
-      <div
-        className="flex h-14 shrink-0 items-center px-4 text-white shadow-sm"
-        style={{ background: `linear-gradient(135deg, ${accent}, ${accent}cc)` }}
-      >
+      <div className="flex h-14 shrink-0 items-center px-4 text-white shadow-sm" style={{ backgroundColor: accent }}>
         <span className="font-medium">{merchantName}</span>
       </div>
       {session ? (

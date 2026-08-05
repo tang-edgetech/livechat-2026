@@ -13,12 +13,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 
+	"livechat/backend/internal/audit"
 	"livechat/backend/internal/automation"
 	"livechat/backend/internal/routing"
 	"livechat/backend/internal/ws"
@@ -157,6 +159,30 @@ func ContinueOnVisitorMessage(ctx context.Context, conn *sql.DB, hub *ws.Hub, re
 	if node == nil || node.Type != "ask_question" {
 		return false, nil
 	}
+
+	// Optional regex validation + retry limit (overview.md §12's Live
+	// Helper Chat research: "collect information, retry on bad input,
+	// give up after N tries" is a documented, common pattern). Both are
+	// opt-in via node config — a flow with neither set behaves exactly
+	// as before.
+	if pattern, _ := node.Config["validationPattern"].(string); pattern != "" {
+		if re, err := regexp.Compile(pattern); err == nil && !re.MatchString(messageBody) {
+			retryKey := "__retries_" + node.ID
+			retries, _ := fc.variables[retryKey].(float64)
+			retries++
+			maxRetries, _ := node.Config["maxRetries"].(float64)
+			if maxRetries > 0 && retries >= maxRetries {
+				delete(fc.variables, retryKey)
+				failNext, _ := node.Config["retryFailNext"].(string)
+				return true, fc.run(ctx, failNext)
+			}
+			fc.variables[retryKey] = retries
+			fc.sendBotMessage("Sorry, that doesn't look right. "+fc.renderTemplate(fmt.Sprint(node.Config["message"])), "text", nil)
+			return true, fc.persistState(node.ID)
+		}
+		delete(fc.variables, "__retries_"+node.ID)
+	}
+
 	varName, _ := node.Config["variable"].(string)
 	if varName == "" {
 		varName = "last_answer"
@@ -174,6 +200,7 @@ type flowContext struct {
 	visitorID   int64
 	merchantID  int64
 	chatUUID    string
+	startedAt   time.Time
 	flowID      int64
 	flow        FlowDef
 	variables   map[string]any
@@ -181,8 +208,58 @@ type flowContext struct {
 
 func newFlowContext(conn *sql.DB, hub *ws.Hub, redisClient *redis.Client, chatID, flowID int64, flow FlowDef) (*flowContext, error) {
 	fc := &flowContext{conn: conn, hub: hub, redisClient: redisClient, chatID: chatID, flowID: flowID, flow: flow, variables: map[string]any{}}
-	err := conn.QueryRow(`SELECT visitor_id, merchant_id, uuid FROM chat WHERE id = ?`, chatID).Scan(&fc.visitorID, &fc.merchantID, &fc.chatUUID)
+	err := conn.QueryRow(`SELECT visitor_id, merchant_id, uuid, started_at FROM chat WHERE id = ?`, chatID).
+		Scan(&fc.visitorID, &fc.merchantID, &fc.chatUUID, &fc.startedAt)
 	return fc, err
+}
+
+// builtInFields are always available to a `condition` step's rules
+// alongside custom variables — chat_duration_seconds and visitor_tier
+// (overview.md §6.9.1) are a cheap, useful pair to expose without asking
+// the flow author to capture them into a variable first.
+func (fc *flowContext) builtInFields() map[string]string {
+	var tier string
+	fc.conn.QueryRow(`SELECT tier FROM visitor WHERE id = ?`, fc.visitorID).Scan(&tier)
+	return map[string]string{
+		"chat_duration_seconds": strconv.FormatInt(int64(time.Since(fc.startedAt).Seconds()), 10),
+		"visitor_tier":          tier,
+	}
+}
+
+// evaluateCondition builds the field->value map a `condition` step's
+// rule(s) evaluate against — built-in fields plus every captured
+// variable — and evaluates via the same automation.ConditionSet/Evaluate
+// already used by Greeting Rules' and Bot triggers' own conditions.
+// Supports the new multi-rule {logic, rules:[{field,operator,value}]}
+// shape and falls back to the legacy single {field,operator,value} shape
+// for any flow saved before this upgrade.
+func (fc *flowContext) evaluateCondition(node *Node) bool {
+	var rules []automation.Rule
+	logic, _ := node.Config["logic"].(string)
+	if rawRules, ok := node.Config["rules"].([]any); ok {
+		for _, r := range rawRules {
+			rm, ok := r.(map[string]any)
+			if !ok {
+				continue
+			}
+			field, _ := rm["field"].(string)
+			operator, _ := rm["operator"].(string)
+			rules = append(rules, automation.Rule{Field: field, Operator: operator, Value: rm["value"]})
+		}
+	} else if field, ok := node.Config["field"].(string); ok {
+		operator, _ := node.Config["operator"].(string)
+		rules = []automation.Rule{{Field: field, Operator: operator, Value: node.Config["value"]}}
+	}
+	if logic == "" {
+		logic = "and"
+	}
+
+	evalCtx := fc.builtInFields()
+	for name, value := range fc.variables {
+		evalCtx[name] = fmt.Sprint(value)
+	}
+
+	return automation.Evaluate(automation.ConditionSet{Logic: logic, Rules: rules}, evalCtx)
 }
 
 func (fc *flowContext) find(id string) *Node {
@@ -206,7 +283,7 @@ func (fc *flowContext) run(ctx context.Context, current string) error {
 
 		switch node.Type {
 		case "send_message":
-			fc.sendBotMessage(fmt.Sprint(node.Config["message"]), "text", nil)
+			fc.sendBotMessage(fc.renderTemplate(fmt.Sprint(node.Config["message"])), "text", nil)
 			current = node.Next
 
 		case "ask_question":
@@ -218,16 +295,11 @@ func (fc *flowContext) run(ctx context.Context, current string) error {
 				s := string(metaBytes)
 				metadata = &s
 			}
-			fc.sendBotMessage(fmt.Sprint(node.Config["message"]), msgType, metadata)
+			fc.sendBotMessage(fc.renderTemplate(fmt.Sprint(node.Config["message"])), msgType, metadata)
 			return fc.persistState(node.ID)
 
 		case "condition":
-			field, _ := node.Config["field"].(string)
-			operator, _ := node.Config["operator"].(string)
-			value := node.Config["value"]
-			actual := fmt.Sprint(fc.variables[field])
-			cs := automation.ConditionSet{Logic: "and", Rules: []automation.Rule{{Field: field, Operator: operator, Value: value}}}
-			if automation.Evaluate(cs, map[string]string{field: actual}) {
+			if fc.evaluateCondition(node) {
 				current = node.Branches["true"]
 			} else {
 				current = node.Branches["false"]
@@ -291,10 +363,6 @@ func (fc *flowContext) sendBotMessage(body, msgType string, metadata *string) {
 	fc.hub.Publish(ws.DashboardSubject(fc.merchantID), ws.Event{Type: "chat_updated"})
 }
 
-// callIntegration is the "AI"/third-party step (overview.md §6.4): a
-// generic outbound REST call, never a hardcoded vendor SDK. Best-effort —
-// a failed call posts a graceful fallback message instead of breaking
-// the conversation.
 // visitorSnapshot is the identity slice sent to an external system on
 // every call_integration request — enough for a CRM/AI service to
 // recognize the customer without exposing anything beyond what's already
@@ -395,6 +463,19 @@ func (fc *flowContext) callIntegration(node *Node) {
 	var body map[string]any
 	json.NewDecoder(resp.Body).Decode(&body)
 
+	// Debug visibility (overview.md §12's Live Helper Chat research
+	// flagged this as the single UX trick doing the most for flow
+	// debugging) — opt-in per step, reuses the existing audit.Log helper
+	// rather than a bespoke logging path.
+	if logDebug, _ := node.Config["logToAuditLog"].(bool); logDebug {
+		respJSON, _ := json.Marshal(body)
+		audit.Log(fc.conn, audit.Entry{
+			MerchantID: &fc.merchantID, Category: "bot_debug",
+			Message:    fmt.Sprintf("call_integration request: %s | response (%d): %s", string(payload), resp.StatusCode, string(respJSON)),
+			StatusCode: resp.StatusCode, Source: "bot",
+		})
+	}
+
 	var extracted any
 	if responsePath != "" {
 		extracted = resolvePath(body, responsePath)
@@ -414,6 +495,27 @@ func (fc *flowContext) callIntegration(node *Node) {
 		}
 		fc.sendBotMessage(text, "text", nil)
 	}
+}
+
+// templateVarPattern matches `{{name}}` and `{{name || "fallback text"}}` —
+// the one templating shape adopted from Live Helper Chat's much larger
+// mini-language (see overview.md §12 for what wasn't adopted). Fallback
+// applies when the variable is unset or stringifies to "" or "<nil>".
+var templateVarPattern = regexp.MustCompile(`\{\{\s*([a-zA-Z0-9_]+)\s*(?:\|\|\s*"([^"]*)")?\s*\}\}`)
+
+// renderTemplate interpolates `fc.variables` into a message body — used by
+// `send_message` and `ask_question` so a flow can say "Thanks,
+// {{name || "there"}}!" instead of only ever sending static text.
+func (fc *flowContext) renderTemplate(body string) string {
+	return templateVarPattern.ReplaceAllStringFunc(body, func(match string) string {
+		groups := templateVarPattern.FindStringSubmatch(match)
+		name, fallback := groups[1], groups[2]
+		value := fmt.Sprint(fc.variables[name])
+		if value == "" || value == "<nil>" {
+			return fallback
+		}
+		return value
+	})
 }
 
 // resolvePath walks a decoded JSON value (map[string]any / []any) along a

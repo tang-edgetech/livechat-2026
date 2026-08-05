@@ -11,12 +11,16 @@ import (
 	"livechat/backend/internal/password"
 )
 
+var validThemes = map[string]bool{"light": true, "dark": true, "violet": true}
+
 type updateProfileRequest struct {
-	DisplayName string `json:"displayName" binding:"required"`
+	DisplayName     *string `json:"displayName"`
+	ThemePreference *string `json:"themePreference"`
 }
 
-// UpdateProfileHandler: any user, self-service display name (overview.md
-// §6.2).
+// UpdateProfileHandler: any user, self-service display name and/or
+// Appearance preference (overview.md §6.2) — both optional so the
+// Appearance picker can update just the theme without resending the name.
 func UpdateProfileHandler(state *appstate.State) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		conn := state.DB()
@@ -27,10 +31,22 @@ func UpdateProfileHandler(state *appstate.State) gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request"})
 			return
 		}
-
-		if _, err := conn.Exec(`UPDATE user SET display_name = ? WHERE id = ?`, req.DisplayName, userID); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
+		if req.ThemePreference != nil && !validThemes[*req.ThemePreference] {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_theme"})
 			return
+		}
+
+		if req.DisplayName != nil {
+			if _, err := conn.Exec(`UPDATE user SET display_name = ? WHERE id = ?`, *req.DisplayName, userID); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
+				return
+			}
+		}
+		if req.ThemePreference != nil {
+			if _, err := conn.Exec(`UPDATE user SET theme_preference = ? WHERE id = ?`, *req.ThemePreference, userID); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
+				return
+			}
 		}
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	}

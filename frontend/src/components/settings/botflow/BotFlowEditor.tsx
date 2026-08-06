@@ -8,7 +8,7 @@ import { useRouter } from "next/navigation";
 
 import { apiGet, apiPost, apiPatch, ApiError } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
-import type { BotFlow, ConditionRule, ConditionSet, FlowNode, TriggerDef } from "@/lib/automationTypes";
+import type { BotFlow, ConditionRule, ConditionSet, FlowDef, FlowNode, PassthroughConfig, TriggerDef } from "@/lib/automationTypes";
 import type { Merchant } from "@/lib/types";
 import { BotFlowCanvas } from "./BotFlowCanvas";
 import { STEP_TYPES, createNode, isTerminalType, newStepId, stepLabel, withAutoLayout } from "./stepTypes";
@@ -31,6 +31,15 @@ const VALIDATION_PRESETS = [
   { value: "^[0-9+\\-\\s()]{7,}$", label: "Phone number" },
   { value: "custom", label: "Custom pattern..." },
 ];
+
+function parseExistingFlow(existing?: BotFlow): FlowDef | null {
+  if (!existing) return null;
+  try {
+    return JSON.parse(existing.flow) as FlowDef;
+  } catch {
+    return null;
+  }
+}
 
 function buildTemplate(): { steps: FlowNode[]; entry: string } {
   const ids = [newStepId(), newStepId(), newStepId(), newStepId()];
@@ -60,27 +69,16 @@ export function BotFlowEditor({ existing }: { existing?: BotFlow }) {
   const [audience, setAudience] = useState<"normal" | "vip" | "both">("normal");
 
   const [steps, setSteps] = useState<FlowNode[]>(() => {
-    if (existing) {
-      try {
-        const flow = JSON.parse(existing.flow) as { entry: string; nodes: FlowNode[] };
-        return withAutoLayout(flow.nodes, flow.entry);
-      } catch {
-        return [];
-      }
-    }
-    return [];
+    const flow = parseExistingFlow(existing);
+    return flow ? withAutoLayout(flow.nodes ?? [], flow.entry ?? "") : [];
   });
-  const [entry, setEntry] = useState<string>(() => {
-    if (!existing) return "";
-    try {
-      return (JSON.parse(existing.flow) as { entry: string }).entry ?? "";
-    } catch {
-      return "";
-    }
-  });
+  const [entry, setEntry] = useState<string>(() => parseExistingFlow(existing)?.entry ?? "");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+
+  const [flowMode, setFlowMode] = useState<"steps" | "ai_passthrough">(() => parseExistingFlow(existing)?.mode ?? "steps");
+  const [passthrough, setPassthrough] = useState<PassthroughConfig>(() => parseExistingFlow(existing)?.passthrough ?? {});
 
   useEffect(() => {
     apiGet<{ merchants: Merchant[] }>("/api/merchants").then((res) => setMerchants(res.merchants));
@@ -192,17 +190,24 @@ export function BotFlowEditor({ existing }: { existing?: BotFlow }) {
       message.error("Please name this bot flow.");
       return;
     }
-    if (steps.length === 0) {
-      message.error("Add at least one step.");
-      return;
-    }
-    if (!entry) {
-      message.error("Pick a starting step — click a node and use \"Set as start\", or add-step auto-picks the first one.");
-      return;
-    }
-    if (!hasTerminal) {
-      message.error('End the flow with "Hand over to a real person" or "End the chat".');
-      return;
+    if (flowMode === "ai_passthrough") {
+      if (!passthrough.integrationId) {
+        message.error("Choose which connection this flow should forward visitor messages to.");
+        return;
+      }
+    } else {
+      if (steps.length === 0) {
+        message.error("Add at least one step.");
+        return;
+      }
+      if (!entry) {
+        message.error("Pick a starting step — click a node and use \"Set as start\", or add-step auto-picks the first one.");
+        return;
+      }
+      if (!hasTerminal) {
+        message.error('End the flow with "Hand over to a real person" or "End the chat".');
+        return;
+      }
     }
     if (!isGlobal && !merchantUuid) {
       message.error("Choose a merchant, or mark this as global.");
@@ -214,7 +219,8 @@ export function BotFlowEditor({ existing }: { existing?: BotFlow }) {
       rules: usePageCondition && pageContains ? [{ field: "page_url", operator: "contains", value: pageContains }] : [],
     };
     const trigger: TriggerDef = { type: "chat_start", conditions, audience };
-    const flow = { entry, nodes: steps };
+    const flow: FlowDef =
+      flowMode === "ai_passthrough" ? { entry: "", nodes: [], mode: "ai_passthrough", passthrough } : { entry, nodes: steps };
 
     setSubmitting(true);
     try {
@@ -251,6 +257,20 @@ export function BotFlowEditor({ existing }: { existing?: BotFlow }) {
               <Switch checked={isActive} onChange={setIsActive} />
               <span>Active</span>
             </div>
+            <Typography.Text strong>How does this flow work?</Typography.Text>
+            <Segmented
+              value={flowMode}
+              onChange={(v) => setFlowMode(v as "steps" | "ai_passthrough")}
+              options={[
+                { label: "Step-by-step", value: "steps" },
+                { label: "AI Passthrough", value: "ai_passthrough" },
+              ]}
+            />
+            <Typography.Paragraph type="secondary" style={{ marginTop: -4, marginBottom: 0, fontSize: 12.5 }}>
+              {flowMode === "steps"
+                ? "A scripted sequence of steps you build below (ask questions, branch, hand off)."
+                : "Every visitor message is forwarded to a connection (with the message and a session id) and whatever it replies with is sent back as-is — closer to handing the whole conversation to a live AI than running a script."}
+            </Typography.Paragraph>
             {isSuperAdmin && (
               <Checkbox checked={isGlobal} onChange={(e) => setIsGlobal(e.target.checked)}>
                 Apply to all merchants
@@ -307,50 +327,84 @@ export function BotFlowEditor({ existing }: { existing?: BotFlow }) {
           )}
         </Card>
 
-        <Card
-          title="Flow"
-          extra={
-            <Space>
-              {steps.length === 0 && (
-                <Button size="small" onClick={applyTemplate}>
-                  Use a template
-                </Button>
-              )}
-              <Button size="small" type="primary" icon={<PlusOutlined />} onClick={() => setPickerOpen(true)}>
-                Add step
-              </Button>
-            </Space>
-          }
-        >
-          {steps.length === 0 ? (
-            <div className="flex h-40 items-center justify-center text-neutral-400">
-              Add a step to start building this flow.
-            </div>
-          ) : (
-            <>
-              <Typography.Paragraph type="secondary" style={{ marginBottom: 8, fontSize: 12.5 }}>
-                Drag from a step&apos;s bottom dot to another step to connect them. Click a step to edit it on the
-                right. Select and press Delete to remove a step or a connection.
-              </Typography.Paragraph>
-              <BotFlowCanvas
-                steps={steps}
-                entry={entry}
-                selectedId={selectedId}
-                onSelect={setSelectedId}
-                onMove={moveNode}
-                onConnect={connectNodes}
-                onDeleteNodes={removeNodes}
-                onDeleteEdges={removeEdges}
+        {flowMode === "ai_passthrough" ? (
+          <Card title="AI Passthrough">
+            <Space orientation="vertical" style={{ width: "100%", maxWidth: 480 }}>
+              <Select
+                placeholder="Which connection should receive every message?"
+                style={{ width: "100%" }}
+                value={passthrough.integrationId}
+                onChange={(v) => setPassthrough({ ...passthrough, integrationId: v })}
+                options={integrations.map((i) => ({ value: i.id, label: i.name }))}
+                notFoundContent="No connections set up yet — ask your Super Admin to add one in Settings > Integration."
               />
-            </>
-          )}
-        </Card>
+              <Input.TextArea
+                placeholder="Greeting message sent when the chat starts (optional)"
+                rows={2}
+                value={passthrough.greeting ?? ""}
+                onChange={(e) => setPassthrough({ ...passthrough, greeting: e.target.value })}
+              />
+              <Checkbox
+                checked={passthrough.logToAuditLog === true}
+                onChange={(e) => setPassthrough({ ...passthrough, logToAuditLog: e.target.checked })}
+              >
+                Log every request &amp; response to Audit Logs (for debugging this connection)
+              </Checkbox>
+              <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 0 }}>
+                Every visitor message is POSTed as <code>{"{ message, sessionId, visitorUuid }"}</code>; a reply of{" "}
+                <code>{"{ message: \"...\" }"}</code> is sent back to the visitor as-is. Include{" "}
+                <code>{"{ handoff: true }"}</code> in the response to route the chat to a human agent instead —
+                exactly as if an operator claimed it.
+              </Typography.Paragraph>
+            </Space>
+          </Card>
+        ) : (
+          <Card
+            title="Flow"
+            extra={
+              <Space>
+                {steps.length === 0 && (
+                  <Button size="small" onClick={applyTemplate}>
+                    Use a template
+                  </Button>
+                )}
+                <Button size="small" type="primary" icon={<PlusOutlined />} onClick={() => setPickerOpen(true)}>
+                  Add step
+                </Button>
+              </Space>
+            }
+          >
+            {steps.length === 0 ? (
+              <div className="flex h-40 items-center justify-center text-neutral-400">
+                Add a step to start building this flow.
+              </div>
+            ) : (
+              <>
+                <Typography.Paragraph type="secondary" style={{ marginBottom: 8, fontSize: 12.5 }}>
+                  Drag from a step&apos;s bottom dot to another step to connect them. Click a step to edit it on the
+                  right. Select and press Delete to remove a step or a connection.
+                </Typography.Paragraph>
+                <BotFlowCanvas
+                  steps={steps}
+                  entry={entry}
+                  selectedId={selectedId}
+                  onSelect={setSelectedId}
+                  onMove={moveNode}
+                  onConnect={connectNodes}
+                  onDeleteNodes={removeNodes}
+                  onDeleteEdges={removeEdges}
+                />
+              </>
+            )}
+          </Card>
+        )}
 
         <Button type="primary" loading={submitting} onClick={save} style={{ width: 160 }}>
           Save bot flow
         </Button>
       </div>
 
+      {flowMode === "steps" && (
       <div className="w-full lg:w-96">
         <Card
           title={selectedNode ? stepLabel(selectedNode.type) : "Inspector"}
@@ -382,6 +436,7 @@ export function BotFlowEditor({ existing }: { existing?: BotFlow }) {
           )}
         </Card>
       </div>
+      )}
 
       <Modal open={pickerOpen} onCancel={() => setPickerOpen(false)} footer={null} title="Add a step">
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">

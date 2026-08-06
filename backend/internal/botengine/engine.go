@@ -37,6 +37,31 @@ type Node struct {
 type FlowDef struct {
 	Nodes []Node `json:"nodes"`
 	Entry string `json:"entry"`
+	// Mode "" (unset — every flow saved before this feature) or "steps"
+	// both mean the node-graph interpreter below; "ai_passthrough" skips
+	// the graph entirely — see PassthroughConfig.
+	Mode        string             `json:"mode,omitempty"`
+	Passthrough *PassthroughConfig `json:"passthrough,omitempty"`
+}
+
+// PassthroughConfig is item 2c: instead of a scripted node graph, every
+// visitor message for the life of the chat is forwarded verbatim to a
+// third-party API (message + session/visitor identity) and whatever it
+// replies with becomes the bot's next message — closer to handing the
+// whole conversation to a live AI agent than to running a flow. Reuses
+// the same `integration` row (URL/secret/headers) call_integration steps
+// already use, just with a fixed request/response shape instead of a
+// per-step config.
+type PassthroughConfig struct {
+	IntegrationID int64 `json:"integrationId"`
+	// Greeting is sent once, right when the flow's trigger first claims
+	// the chat — before any visitor message exists to forward. Optional;
+	// a passthrough flow with no greeting just waits silently.
+	Greeting string `json:"greeting,omitempty"`
+	// LogToAuditLog mirrors call_integration's own debug flag — useful
+	// here specifically because a live AI backend is the thing most
+	// likely to need debugging during setup.
+	LogToAuditLog bool `json:"logToAuditLog,omitempty"`
 }
 
 type TriggerDef struct {
@@ -156,6 +181,12 @@ func TryStart(ctx context.Context, conn *sql.DB, hub *ws.Hub, redisClient *redis
 		if err != nil {
 			return false, err
 		}
+		if flow.Mode == "ai_passthrough" {
+			if flow.Passthrough != nil && flow.Passthrough.Greeting != "" {
+				fc.sendBotMessage(fc.renderTemplate(flow.Passthrough.Greeting), "text", nil)
+			}
+			return true, nil
+		}
 		return true, fc.run(ctx, flow.Entry)
 	}
 	return false, nil
@@ -174,7 +205,7 @@ func ContinueOnVisitorMessage(ctx context.Context, conn *sql.DB, hub *ws.Hub, re
 	).Scan(&status, &botFlowID, &nodeID, &variablesRaw); err != nil {
 		return false, err
 	}
-	if status != "bot" || !botFlowID.Valid || !nodeID.Valid {
+	if status != "bot" || !botFlowID.Valid {
 		return false, nil
 	}
 
@@ -193,6 +224,14 @@ func ContinueOnVisitorMessage(ctx context.Context, conn *sql.DB, hub *ws.Hub, re
 	}
 	if variablesRaw.Valid {
 		json.Unmarshal([]byte(variablesRaw.String), &fc.variables)
+	}
+
+	if flow.Mode == "ai_passthrough" {
+		fc.continuePassthrough(ctx, messageBody)
+		return true, nil
+	}
+	if !nodeID.Valid {
+		return false, nil
 	}
 
 	node := fc.find(nodeID.String)
@@ -534,6 +573,80 @@ func (fc *flowContext) callIntegration(node *Node) {
 			text = "(no response)"
 		}
 		fc.sendBotMessage(text, "text", nil)
+	}
+}
+
+// continuePassthrough is AI passthrough mode's entire "engine" — no node
+// graph, just forward whatever the visitor just typed (plus enough
+// identity to correlate a session) to the configured integration and
+// post back whatever it says. Mirrors callIntegration's HTTP mechanics
+// (same integration row, same secret-as-bearer-token, same custom
+// headers) but with a fixed request/response shape instead of a
+// per-step config, since there's no step here to configure.
+func (fc *flowContext) continuePassthrough(ctx context.Context, messageBody string) {
+	if fc.flow.Passthrough == nil {
+		fc.sendBotMessage("Sorry, this flow isn't set up correctly.", "text", nil)
+		return
+	}
+
+	var configRaw, secret string
+	if err := fc.conn.QueryRow(`SELECT config, secret_hash FROM integration WHERE id = ?`, fc.flow.Passthrough.IntegrationID).Scan(&configRaw, &secret); err != nil {
+		fc.sendBotMessage("Sorry, that connection isn't set up correctly.", "text", nil)
+		return
+	}
+	var cfg struct {
+		URL     string            `json:"url"`
+		Headers map[string]string `json:"headers"`
+	}
+	json.Unmarshal([]byte(configRaw), &cfg)
+
+	visitor := fc.visitorSnapshot()
+	payload, _ := json.Marshal(map[string]any{
+		"message":     messageBody,
+		"sessionId":   fc.chatUUID,
+		"visitorUuid": visitor.UUID,
+		"visitor":     visitor,
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.URL, bytes.NewReader(payload))
+	if err != nil {
+		fc.sendBotMessage("Sorry, something went wrong reaching that system.", "text", nil)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+secret)
+	for k, v := range cfg.Headers {
+		req.Header.Set(k, v)
+	}
+
+	client := http.Client{Timeout: 8 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		fc.sendBotMessage("Sorry, something went wrong reaching that system.", "text", nil)
+		return
+	}
+	defer resp.Body.Close()
+
+	var body map[string]any
+	json.NewDecoder(resp.Body).Decode(&body)
+
+	if fc.flow.Passthrough.LogToAuditLog {
+		respJSON, _ := json.Marshal(body)
+		audit.Log(fc.conn, audit.Entry{
+			MerchantID: &fc.merchantID, Category: "bot_debug",
+			Message:    fmt.Sprintf("ai_passthrough request: %s | response (%d): %s", string(payload), resp.StatusCode, string(respJSON)),
+			StatusCode: resp.StatusCode, Source: "bot",
+		})
+	}
+
+	if reply, _ := body["message"].(string); reply != "" {
+		fc.sendBotMessage(reply, "text", nil)
+	}
+
+	// A live AI backend can ask to be routed to a human the same way an
+	// operator would claim the chat manually — no separate "end
+	// passthrough" mechanic needed, this just triggers the existing path.
+	if handoff, _ := body["handoff"].(bool); handoff {
+		fc.handoffToAgent(ctx)
 	}
 }
 

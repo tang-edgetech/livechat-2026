@@ -70,7 +70,11 @@ export type FlowNode = {
   position?: { x: number; y: number };
 };
 
-export type FlowDef = { nodes: FlowNode[]; entry: string };
+// mode "steps" (default/omitted) runs the node graph below via nodes/
+// entry; "ai_passthrough" ignores them entirely and forwards every
+// visitor message to `passthrough.integrationId` instead (item 2c).
+export type PassthroughConfig = { integrationId?: number; greeting?: string; logToAuditLog?: boolean };
+export type FlowDef = { nodes: FlowNode[]; entry: string; mode?: "steps" | "ai_passthrough"; passthrough?: PassthroughConfig };
 // audience gates which visitor tier this flow is even eligible for
 // (overview.md item 3) — omitted/"normal" is the default so existing
 // flows keep never firing for a VIP visitor unless deliberately opted in.

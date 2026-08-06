@@ -1,6 +1,10 @@
 export type AutomationRule = {
   id: number;
   name: string;
+  // "chat_start" (default) fires once when a chat opens; "keyword_message"
+  // scans every visitor message mid-conversation and auto-replies on the
+  // first keyword/phrase match (item 2b) — see AutomationTab.tsx.
+  trigger_type: "chat_start" | "keyword_message";
   condition: string | null;
   message: string;
   is_global: boolean;

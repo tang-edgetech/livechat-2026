@@ -14,6 +14,7 @@ import (
 type automationRuleOut struct {
 	ID           int64   `json:"id"`
 	Name         string  `json:"name"`
+	TriggerType  string  `json:"trigger_type"`
 	Condition    *string `json:"condition"`
 	Message      string  `json:"message"`
 	IsGlobal     bool    `json:"is_global"`
@@ -21,6 +22,15 @@ type automationRuleOut struct {
 	IsHtml       bool    `json:"is_html"`
 	MerchantUUID *string `json:"merchant_uuid"`
 }
+
+// validTriggerTypes are the only trigger_type values a rule can be saved
+// with — 'chat_start' (Greeting Rules' original behavior) and
+// 'keyword_message' (item 2b: scan every visitor message mid-conversation
+// for a keyword/phrase and auto-send the matching reply). Both share the
+// exact same rule shape (name/condition/message/scope), just evaluated at
+// a different moment and against a different evalCtx field — see
+// applyAutomationGreeting/applyKeywordAutoResponse in visitorchat.go.
+var validTriggerTypes = map[string]bool{"chat_start": true, "keyword_message": true}
 
 // ListAutomationRulesHandler returns every rule visible to the requester:
 // global rules, plus rules scoped to any merchant they hold (overview.md
@@ -38,7 +48,7 @@ func ListAutomationRulesHandler(state *appstate.State) gin.HandlerFunc {
 			return
 		}
 		placeholders, args := int64SliceToPlaceholders(merchantIDs)
-		query := `SELECT DISTINCT r.id, r.name, r.condition, r.message, r.is_global, r.is_active, r.is_html, m.uuid
+		query := `SELECT DISTINCT r.id, r.name, r.trigger_type, r.condition, r.message, r.is_global, r.is_active, r.is_html, m.uuid
 		          FROM automation_rule r
 		          LEFT JOIN automation_rule_merchant arm ON arm.automation_rule_id = r.id
 		          LEFT JOIN merchant m ON m.id = arm.merchant_id
@@ -58,7 +68,7 @@ func ListAutomationRulesHandler(state *appstate.State) gin.HandlerFunc {
 		out := []automationRuleOut{}
 		for rows.Next() {
 			var r automationRuleOut
-			if err := rows.Scan(&r.ID, &r.Name, &r.Condition, &r.Message, &r.IsGlobal, &r.IsActive, &r.IsHtml, &r.MerchantUUID); err != nil {
+			if err := rows.Scan(&r.ID, &r.Name, &r.TriggerType, &r.Condition, &r.Message, &r.IsGlobal, &r.IsActive, &r.IsHtml, &r.MerchantUUID); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
 				return
 			}
@@ -70,6 +80,7 @@ func ListAutomationRulesHandler(state *appstate.State) gin.HandlerFunc {
 
 type saveAutomationRuleRequest struct {
 	Name         string  `json:"name" binding:"required"`
+	TriggerType  string  `json:"triggerType"`
 	Condition    string  `json:"condition"`
 	Message      string  `json:"message" binding:"required"`
 	IsGlobal     bool    `json:"isGlobal"`
@@ -100,6 +111,13 @@ func CreateAutomationRuleHandler(state *appstate.State) gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "html_not_allowed"})
 			return
 		}
+		if req.TriggerType == "" {
+			req.TriggerType = "chat_start"
+		}
+		if !validTriggerTypes[req.TriggerType] {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_trigger_type"})
+			return
+		}
 
 		var merchantID *int64
 		if req.MerchantUUID != nil && *req.MerchantUUID != "" {
@@ -115,8 +133,8 @@ func CreateAutomationRuleHandler(state *appstate.State) gin.HandlerFunc {
 		}
 
 		result, err := conn.Exec(
-			`INSERT INTO automation_rule (name, `+"`condition`"+`, message, is_global, is_active, is_html, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			req.Name, nullIfEmpty(req.Condition), req.Message, req.IsGlobal, req.IsActive, req.IsHtml, userID,
+			`INSERT INTO automation_rule (name, trigger_type, `+"`condition`"+`, message, is_global, is_active, is_html, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			req.Name, req.TriggerType, nullIfEmpty(req.Condition), req.Message, req.IsGlobal, req.IsActive, req.IsHtml, userID,
 		)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error", "detail": err.Error()})
@@ -155,6 +173,13 @@ func UpdateAutomationRuleHandler(state *appstate.State) gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "html_not_allowed"})
 			return
 		}
+		if req.TriggerType == "" {
+			req.TriggerType = "chat_start"
+		}
+		if !validTriggerTypes[req.TriggerType] {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_trigger_type"})
+			return
+		}
 
 		var merchantID *int64
 		if req.MerchantUUID != nil && *req.MerchantUUID != "" {
@@ -170,8 +195,8 @@ func UpdateAutomationRuleHandler(state *appstate.State) gin.HandlerFunc {
 		}
 
 		if _, err := conn.Exec(
-			`UPDATE automation_rule SET name = ?, `+"`condition`"+` = ?, message = ?, is_global = ?, is_active = ?, is_html = ? WHERE id = ?`,
-			req.Name, nullIfEmpty(req.Condition), req.Message, req.IsGlobal, req.IsActive, req.IsHtml, id,
+			`UPDATE automation_rule SET name = ?, trigger_type = ?, `+"`condition`"+` = ?, message = ?, is_global = ?, is_active = ?, is_html = ? WHERE id = ?`,
+			req.Name, req.TriggerType, nullIfEmpty(req.Condition), req.Message, req.IsGlobal, req.IsActive, req.IsHtml, id,
 		); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error", "detail": err.Error()})
 			return

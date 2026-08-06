@@ -189,6 +189,8 @@ func SendMessageV1Handler(state *appstate.State, hub *ws.Hub, redisClient *redis
 
 		if ref.Status == "bot" {
 			botengine.ContinueOnVisitorMessage(context.Background(), conn, hub, redisClient, ref.ID, req.Body)
+		} else {
+			applyKeywordAutoResponse(conn, hub, ref, c.Param("uuid"), req.Body)
 		}
 
 		c.JSON(http.StatusOK, out)

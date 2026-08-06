@@ -54,7 +54,7 @@ func Evaluate(cs ConditionSet, ctx map[string]string) bool {
 func evalRule(r Rule, actual string) bool {
 	switch r.Operator {
 	case "contains":
-		return strings.Contains(actual, fmt.Sprint(r.Value))
+		return strings.Contains(strings.ToLower(actual), strings.ToLower(fmt.Sprint(r.Value)))
 	case "equals":
 		return actual == fmt.Sprint(r.Value)
 	case "not_equals":

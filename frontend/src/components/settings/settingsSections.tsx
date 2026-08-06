@@ -109,7 +109,7 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
         key: "automation",
         label: "Greeting Rules",
         description:
-          "Show visitors a message automatically when they open the chat — a greeting, or a targeted message based on what page they're on or what time it is.",
+          "Automatic messages: a greeting when a chat opens (targeted by page or time), or an instant auto-reply when a visitor's message contains a keyword.",
         icon: <NotificationOutlined />,
         Component: AutomationTab,
         staffOnly: true,

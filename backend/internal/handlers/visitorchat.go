@@ -335,6 +335,75 @@ func applyAutomationGreeting(conn *sql.DB, hub *ws.Hub, chatID, merchantID int64
 	}
 }
 
+// applyKeywordAutoResponse scans an incoming visitor message against
+// every active 'keyword_message' automation_rule visible to this
+// merchant (item 2b) and, on the first match, sends its message back as
+// an automated 'bot' reply — same rule shape/scoping as
+// applyAutomationGreeting's chat_start rules, just evaluated against the
+// message body instead of page/time context. Skipped while a bot flow
+// (status == 'bot') is actively driving the chat: that flow already owns
+// responding to this message (ContinueOnVisitorMessage), so layering a
+// second automated reply on top would just be confusing. Best-effort,
+// same as the greeting — a lookup failure here must never fail the
+// visitor's own message from being saved/delivered.
+func applyKeywordAutoResponse(conn *sql.DB, hub *ws.Hub, ref *chatRef, chatUUID, messageBody string) {
+	if ref.Status == "bot" || ref.Status == "closed" {
+		return
+	}
+
+	rows, err := conn.Query(
+		`SELECT DISTINCT r.condition, r.message, r.is_html FROM automation_rule r
+		 LEFT JOIN automation_rule_merchant arm ON arm.automation_rule_id = r.id
+		 WHERE r.is_active = TRUE AND r.trigger_type = 'keyword_message'
+		 AND (r.is_global = TRUE OR arm.merchant_id = ?)
+		 ORDER BY r.created_at ASC`,
+		ref.MerchantID,
+	)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+
+	evalCtx := map[string]string{"message": messageBody}
+	for rows.Next() {
+		var conditionRaw sql.NullString
+		var reply string
+		var isHtml bool
+		if err := rows.Scan(&conditionRaw, &reply, &isHtml); err != nil {
+			return
+		}
+		var cs automation.ConditionSet
+		if conditionRaw.Valid {
+			json.Unmarshal([]byte(conditionRaw.String), &cs)
+		}
+		// An empty rule list matches unconditionally (automation.Evaluate) —
+		// meaningless for a keyword rule, so require at least one keyword
+		// configured rather than auto-replying to every single message.
+		if len(cs.Rules) == 0 || !automation.Evaluate(cs, evalCtx) {
+			continue
+		}
+
+		var metadata *string
+		if isHtml {
+			raw, _ := json.Marshal(map[string]bool{"isHtml": true})
+			s := string(raw)
+			metadata = &s
+		}
+
+		msgID, createdAt, err := insertMessage(conn, ref.ID, "bot", nil, reply, "text", metadata)
+		if err != nil {
+			return
+		}
+		out := messageOut{ID: msgID, ChatUUID: chatUUID, SenderType: "bot", Body: reply, Type: "text", CreatedAt: createdAt, Metadata: metadata}
+		hub.Publish(ws.VisitorSubject(ref.VisitorID), ws.Event{Type: "message", Data: out})
+		if ref.AgentID.Valid {
+			hub.Publish(ws.AgentSubject(ref.AgentID.Int64), ws.Event{Type: "message", Data: out})
+		}
+		notifyChatUpdated(conn, hub, ref.MerchantID, chatUUID)
+		return // one auto-response per visitor message is enough
+	}
+}
+
 // visitorChatAccess validates the (visitor, chat) pair every visitor
 // endpoint receives as query params — the visitor equivalent of
 // chatAccess's merchant-scope check for staff.
@@ -426,6 +495,8 @@ func SendVisitorMessageHandler(state *appstate.State, hub *ws.Hub, redisClient *
 			// Best-effort: a bot-engine hiccup shouldn't fail the
 			// visitor's own message from being saved/delivered above.
 			botengine.ContinueOnVisitorMessage(context.Background(), conn, hub, redisClient, ref.ID, req.Body)
+		} else {
+			applyKeywordAutoResponse(conn, hub, ref, c.Param("uuid"), req.Body)
 		}
 
 		c.JSON(http.StatusOK, out)

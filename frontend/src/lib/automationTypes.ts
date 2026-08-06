@@ -63,6 +63,11 @@ export type FlowNode = {
   config: Record<string, unknown>;
   next?: string;
   branches?: { true?: string; false?: string };
+  // Canvas layout only — the engine (botengine/engine.go) never reads
+  // this, it just walks next/branches. Optional so a flow authored
+  // before the visual canvas editor still loads (falls back to an
+  // auto-layout position).
+  position?: { x: number; y: number };
 };
 
 export type FlowDef = { nodes: FlowNode[]; entry: string };

@@ -3,23 +3,17 @@
 import { useEffect, useState } from "react";
 import { AutoComplete, Button, Card, Checkbox, Input, InputNumber, Modal, Segmented, Select, Space, Switch, Typography, message } from "antd";
 import { DeleteOutlined, PlusOutlined } from "@ant-design/icons";
+import type { Connection } from "@xyflow/react";
 import { useRouter } from "next/navigation";
 
 import { apiGet, apiPost, apiPatch, ApiError } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
-import type { BotFlow, ConditionRule, ConditionSet, TriggerDef } from "@/lib/automationTypes";
+import type { BotFlow, ConditionRule, ConditionSet, FlowNode, TriggerDef } from "@/lib/automationTypes";
 import type { Merchant } from "@/lib/types";
-import { FlowChartPreview } from "./FlowChartPreview";
-import { STEP_TYPES, newStepId, stepsToFlow, flowToSteps, type BuilderStep } from "./stepTypes";
+import { BotFlowCanvas } from "./BotFlowCanvas";
+import { STEP_TYPES, createNode, isTerminalType, newStepId, stepLabel, withAutoLayout } from "./stepTypes";
 
-const TEMPLATE: BuilderStep[] = [
-  { id: "s1", type: "ask_question", config: { message: "What's your name?" } },
-  { id: "s2", type: "ask_question", config: { message: "And your email address?" } },
-  { id: "s3", type: "send_message", config: { message: "Thanks! Connecting you to a member of our team now." } },
-  { id: "s4", type: "handoff_to_agent", config: {} },
-];
-
-// Always available to reference in a Condition step alongside "answer_N"
+// Always available to reference in a Condition step alongside "answer_<id>"
 // (a captured question answer) — computed by the engine itself, nothing
 // to configure (overview.md §6.9.1/§12).
 const BUILT_IN_FIELDS = [
@@ -38,6 +32,17 @@ const VALIDATION_PRESETS = [
   { value: "custom", label: "Custom pattern..." },
 ];
 
+function buildTemplate(): { steps: FlowNode[]; entry: string } {
+  const ids = [newStepId(), newStepId(), newStepId(), newStepId()];
+  const steps: FlowNode[] = [
+    { id: ids[0], type: "ask_question", config: { message: "What's your name?", variable: `answer_${ids[0]}` }, next: ids[1], position: { x: 80, y: 80 } },
+    { id: ids[1], type: "ask_question", config: { message: "And your email address?", variable: `answer_${ids[1]}` }, next: ids[2], position: { x: 340, y: 80 } },
+    { id: ids[2], type: "send_message", config: { message: "Thanks! Connecting you to a member of our team now." }, next: ids[3], position: { x: 600, y: 80 } },
+    { id: ids[3], type: "handoff_to_agent", config: {}, position: { x: 860, y: 80 } },
+  ];
+  return { steps, entry: ids[0] };
+}
+
 export function BotFlowEditor({ existing }: { existing?: BotFlow }) {
   const router = useRouter();
   const { user } = useAuth();
@@ -54,16 +59,26 @@ export function BotFlowEditor({ existing }: { existing?: BotFlow }) {
   const [pageContains, setPageContains] = useState("");
   const [audience, setAudience] = useState<"normal" | "vip" | "both">("normal");
 
-  const [steps, setSteps] = useState<BuilderStep[]>(() => {
+  const [steps, setSteps] = useState<FlowNode[]>(() => {
     if (existing) {
       try {
-        return flowToSteps(JSON.parse(existing.flow));
+        const flow = JSON.parse(existing.flow) as { entry: string; nodes: FlowNode[] };
+        return withAutoLayout(flow.nodes, flow.entry);
       } catch {
         return [];
       }
     }
     return [];
   });
+  const [entry, setEntry] = useState<string>(() => {
+    if (!existing) return "";
+    try {
+      return (JSON.parse(existing.flow) as { entry: string }).entry ?? "";
+    } catch {
+      return "";
+    }
+  });
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
@@ -87,25 +102,90 @@ export function BotFlowEditor({ existing }: { existing?: BotFlow }) {
     }
   }, [existing]);
 
-  function addStep(type: BuilderStep["type"]) {
-    setSteps((prev) => [...prev, { id: newStepId(), type, config: {} }]);
+  function addStep(type: FlowNode["type"]) {
+    const anchor = steps.find((s) => s.id === selectedId) ?? steps[steps.length - 1];
+    const node = createNode(
+      type,
+      steps.map((s) => s.position ?? { x: 80, y: 80 }),
+      anchor?.position,
+    );
+    setSteps((prev) => [...prev, node]);
+    setSelectedId(node.id);
+    if (!entry) setEntry(node.id);
     setPickerOpen(false);
   }
 
-  function updateStep(id: string, patch: Partial<BuilderStep>) {
+  function updateNode(id: string, patch: Partial<FlowNode>) {
     setSteps((prev) => prev.map((s) => (s.id === id ? { ...s, ...patch } : s)));
   }
 
-  function removeStep(id: string) {
-    setSteps((prev) => prev.filter((s) => s.id !== id));
+  function moveNode(id: string, position: { x: number; y: number }) {
+    setSteps((prev) => prev.map((s) => (s.id === id ? { ...s, position } : s)));
+  }
+
+  function connectNodes(connection: Connection) {
+    const { source, sourceHandle, target } = connection;
+    if (!target || source === target) return;
+    setSteps((prev) =>
+      prev.map((s) => {
+        if (s.id !== source) return s;
+        if (s.type === "condition") {
+          const key = sourceHandle === "false" ? "false" : "true";
+          return { ...s, branches: { ...s.branches, [key]: target } };
+        }
+        return { ...s, next: target };
+      }),
+    );
+  }
+
+  function removeEdges(deleted: { source: string; sourceHandle: string | null }[]) {
+    setSteps((prev) =>
+      prev.map((s) => {
+        let next = s.next;
+        let branches = s.branches;
+        for (const e of deleted) {
+          if (e.source !== s.id) continue;
+          if (s.type === "condition") {
+            branches = { ...branches, [e.sourceHandle === "false" ? "false" : "true"]: undefined };
+          } else {
+            next = undefined;
+          }
+        }
+        return { ...s, next, branches };
+      }),
+    );
+  }
+
+  function removeNodes(ids: string[]) {
+    const idSet = new Set(ids);
+    const remaining = steps
+      .filter((s) => !idSet.has(s.id))
+      .map((s) => ({
+        ...s,
+        next: s.next && idSet.has(s.next) ? undefined : s.next,
+        branches: s.branches
+          ? {
+              true: s.branches.true && idSet.has(s.branches.true) ? undefined : s.branches.true,
+              false: s.branches.false && idSet.has(s.branches.false) ? undefined : s.branches.false,
+            }
+          : s.branches,
+        config: s.config.retryFailNext && idSet.has(s.config.retryFailNext as string) ? { ...s.config, retryFailNext: undefined } : s.config,
+      }));
+    setSteps(remaining);
+    if (entry && idSet.has(entry)) setEntry(remaining[0]?.id ?? "");
+    if (selectedId && idSet.has(selectedId)) setSelectedId(null);
   }
 
   function applyTemplate() {
-    setSteps(TEMPLATE.map((s) => ({ ...s, id: newStepId() })));
+    const t = buildTemplate();
+    setSteps(t.steps);
+    setEntry(t.entry);
+    setSelectedId(null);
   }
 
   const questionSteps = steps.filter((s) => s.type === "ask_question");
-  const hasTerminal = steps.some((s) => s.type === "handoff_to_agent" || s.type === "close_chat");
+  const hasTerminal = steps.some((s) => isTerminalType(s.type));
+  const selectedNode = steps.find((s) => s.id === selectedId) ?? null;
 
   async function save() {
     if (!name.trim()) {
@@ -114,6 +194,10 @@ export function BotFlowEditor({ existing }: { existing?: BotFlow }) {
     }
     if (steps.length === 0) {
       message.error("Add at least one step.");
+      return;
+    }
+    if (!entry) {
+      message.error("Pick a starting step — click a node and use \"Set as start\", or add-step auto-picks the first one.");
       return;
     }
     if (!hasTerminal) {
@@ -130,7 +214,7 @@ export function BotFlowEditor({ existing }: { existing?: BotFlow }) {
       rules: usePageCondition && pageContains ? [{ field: "page_url", operator: "contains", value: pageContains }] : [],
     };
     const trigger: TriggerDef = { type: "chat_start", conditions, audience };
-    const flow = stepsToFlow(steps);
+    const flow = { entry, nodes: steps };
 
     setSubmitting(true);
     try {
@@ -224,32 +308,42 @@ export function BotFlowEditor({ existing }: { existing?: BotFlow }) {
         </Card>
 
         <Card
-          title="Steps"
+          title="Flow"
           extra={
-            steps.length === 0 && (
-              <Button size="small" onClick={applyTemplate}>
-                Use a template
+            <Space>
+              {steps.length === 0 && (
+                <Button size="small" onClick={applyTemplate}>
+                  Use a template
+                </Button>
+              )}
+              <Button size="small" type="primary" icon={<PlusOutlined />} onClick={() => setPickerOpen(true)}>
+                Add step
               </Button>
-            )
+            </Space>
           }
         >
-          <Space orientation="vertical" style={{ width: "100%" }}>
-            {steps.map((step, i) => (
-              <StepCard
-                key={step.id}
-                index={i}
-                step={step}
+          {steps.length === 0 ? (
+            <div className="flex h-40 items-center justify-center text-neutral-400">
+              Add a step to start building this flow.
+            </div>
+          ) : (
+            <>
+              <Typography.Paragraph type="secondary" style={{ marginBottom: 8, fontSize: 12.5 }}>
+                Drag from a step&apos;s bottom dot to another step to connect them. Click a step to edit it on the
+                right. Select and press Delete to remove a step or a connection.
+              </Typography.Paragraph>
+              <BotFlowCanvas
                 steps={steps}
-                questionSteps={questionSteps}
-                integrations={integrations}
-                onChange={(patch) => updateStep(step.id, patch)}
-                onRemove={() => removeStep(step.id)}
+                entry={entry}
+                selectedId={selectedId}
+                onSelect={setSelectedId}
+                onMove={moveNode}
+                onConnect={connectNodes}
+                onDeleteNodes={removeNodes}
+                onDeleteEdges={removeEdges}
               />
-            ))}
-            <Button icon={<PlusOutlined />} onClick={() => setPickerOpen(true)} block>
-              Add step
-            </Button>
-          </Space>
+            </>
+          )}
         </Card>
 
         <Button type="primary" loading={submitting} onClick={save} style={{ width: 160 }}>
@@ -257,9 +351,35 @@ export function BotFlowEditor({ existing }: { existing?: BotFlow }) {
         </Button>
       </div>
 
-      <div className="w-full lg:w-80">
-        <Card title="Flow preview">
-          <FlowChartPreview steps={steps} />
+      <div className="w-full lg:w-96">
+        <Card
+          title={selectedNode ? stepLabel(selectedNode.type) : "Inspector"}
+          extra={
+            selectedNode && (
+              <Space>
+                {selectedNode.id !== entry && (
+                  <Button size="small" onClick={() => setEntry(selectedNode.id)}>
+                    Set as start
+                  </Button>
+                )}
+                <Button type="text" danger icon={<DeleteOutlined />} onClick={() => removeNodes([selectedNode.id])} />
+              </Space>
+            )
+          }
+        >
+          {selectedNode ? (
+            <NodeInspector
+              step={selectedNode}
+              steps={steps}
+              questionSteps={questionSteps}
+              integrations={integrations}
+              onChange={(patch) => updateNode(selectedNode.id, patch)}
+            />
+          ) : (
+            <Typography.Paragraph type="secondary">
+              Click a step on the canvas to edit its settings here.
+            </Typography.Paragraph>
+          )}
         </Card>
       </div>
 
@@ -271,7 +391,9 @@ export function BotFlowEditor({ existing }: { existing?: BotFlow }) {
               onClick={() => addStep(t.type)}
               className="rounded-lg border border-black/10 p-3 text-left hover:border-blue-500 dark:border-white/10"
             >
-              <div className="font-medium">{t.label}</div>
+              <div className="font-medium">
+                {t.icon} {t.label}
+              </div>
               <div className="text-xs text-neutral-500">{t.description}</div>
             </button>
           ))}
@@ -281,27 +403,27 @@ export function BotFlowEditor({ existing }: { existing?: BotFlow }) {
   );
 }
 
-function StepCard({
-  index,
+function stepTargetOptions(steps: FlowNode[], excludeId: string) {
+  return steps
+    .filter((s) => s.id !== excludeId)
+    .map((s) => ({ value: s.id, label: `${stepLabel(s.type)} (step ${steps.indexOf(s) + 1})` }));
+}
+
+function NodeInspector({
   step,
   steps,
   questionSteps,
   integrations,
   onChange,
-  onRemove,
 }: {
-  index: number;
-  step: BuilderStep;
-  steps: BuilderStep[];
-  questionSteps: BuilderStep[];
+  step: FlowNode;
+  steps: FlowNode[];
+  questionSteps: FlowNode[];
   integrations: { id: number; name: string }[];
-  onChange: (patch: Partial<BuilderStep>) => void;
-  onRemove: () => void;
+  onChange: (patch: Partial<FlowNode>) => void;
 }) {
-  const label = STEP_TYPES.find((t) => t.type === step.type)?.label ?? step.type;
-
   return (
-    <Card size="small" title={`Step ${index + 1}: ${label}`} extra={<Button type="text" danger icon={<DeleteOutlined />} onClick={onRemove} />}>
+    <>
       {step.type === "send_message" && (
         <Input.TextArea
           placeholder="Message to send"
@@ -310,13 +432,9 @@ function StepCard({
         />
       )}
 
-      {step.type === "ask_question" && (
-        <AskQuestionFields step={step} index={index} steps={steps} onChange={onChange} />
-      )}
+      {step.type === "ask_question" && <AskQuestionFields step={step} steps={steps} onChange={onChange} />}
 
-      {step.type === "condition" && (
-        <ConditionFields step={step} index={index} steps={steps} questionSteps={questionSteps} onChange={onChange} />
-      )}
+      {step.type === "condition" && <ConditionFields step={step} steps={steps} questionSteps={questionSteps} onChange={onChange} />}
 
       {step.type === "call_integration" && (
         <Space orientation="vertical" style={{ width: "100%" }}>
@@ -361,14 +479,8 @@ function StepCard({
       {(step.type === "handoff_to_agent" || step.type === "close_chat") && (
         <Typography.Text type="secondary">No extra setup needed for this step.</Typography.Text>
       )}
-    </Card>
+    </>
   );
-}
-
-function stepTargetOptions(steps: BuilderStep[], excludeIndex: number) {
-  return steps
-    .map((s, i) => ({ value: s.id, label: `Step ${i + 1}: ${STEP_TYPES.find((t) => t.type === s.type)?.label}` }))
-    .filter((_, i) => i !== excludeIndex);
 }
 
 // Never a bare regex field by default (overview.md §6.0) — a plain-
@@ -377,14 +489,12 @@ function stepTargetOptions(steps: BuilderStep[], excludeIndex: number) {
 // appear once a format is actually required.
 function AskQuestionFields({
   step,
-  index,
   steps,
   onChange,
 }: {
-  step: BuilderStep;
-  index: number;
-  steps: BuilderStep[];
-  onChange: (patch: Partial<BuilderStep>) => void;
+  step: FlowNode;
+  steps: FlowNode[];
+  onChange: (patch: Partial<FlowNode>) => void;
 }) {
   const pattern = (step.config.validationPattern as string | undefined) ?? "";
   const knownPreset = VALIDATION_PRESETS.find((p) => p.value === pattern && p.value !== "custom");
@@ -395,7 +505,7 @@ function AskQuestionFields({
       <Input.TextArea
         placeholder="Question to ask"
         value={String(step.config.message ?? "")}
-        onChange={(e) => onChange({ config: { ...step.config, message: e.target.value, variable: `answer_${index}` } })}
+        onChange={(e) => onChange({ config: { ...step.config, message: e.target.value, variable: `answer_${step.id}` } })}
       />
       <Typography.Text type="secondary" style={{ fontSize: 12 }}>
         The visitor&apos;s reply will be remembered as &quot;the answer to this question&quot;.
@@ -429,7 +539,7 @@ function AskQuestionFields({
             style={{ width: "100%" }}
             value={step.config.retryFailNext as string | undefined}
             onChange={(v) => onChange({ config: { ...step.config, retryFailNext: v } })}
-            options={stepTargetOptions(steps, index)}
+            options={stepTargetOptions(steps, step.id)}
           />
         </>
       )}
@@ -442,19 +552,18 @@ function AskQuestionFields({
 // URL/time-of-day conditions, now also available mid-flow (overview.md
 // §12). A rule's field can be a captured question answer, a built-in
 // (visitor_tier/chat_duration_seconds), or any other variable name typed
-// directly (e.g. a call_integration saveResponseAs/"_ok" flag).
+// directly (e.g. a call_integration saveResponseAs/"_ok" flag). "Yes"/"No"
+// connections are drawn on the canvas itself now, not picked from a list.
 function ConditionFields({
   step,
-  index,
   steps,
   questionSteps,
   onChange,
 }: {
-  step: BuilderStep;
-  index: number;
-  steps: BuilderStep[];
-  questionSteps: BuilderStep[];
-  onChange: (patch: Partial<BuilderStep>) => void;
+  step: FlowNode;
+  steps: FlowNode[];
+  questionSteps: FlowNode[];
+  onChange: (patch: Partial<FlowNode>) => void;
 }) {
   const legacyRule: ConditionRule[] =
     step.config.field && !step.config.rules
@@ -464,9 +573,10 @@ function ConditionFields({
   const logic = (step.config.logic as "and" | "or" | undefined) ?? "and";
 
   const fieldOptions = [
-    ...questionSteps
-      .filter((q) => steps.indexOf(q) < index)
-      .map((q, qi) => ({ value: `answer_${steps.indexOf(q)}`, label: `"${String(q.config.message ?? `Question ${qi + 1}`)}"` })),
+    ...questionSteps.map((q) => ({
+      value: `answer_${q.id}`,
+      label: `"${String(q.config.message ?? "Question")}" (step ${steps.indexOf(q) + 1})`,
+    })),
     ...BUILT_IN_FIELDS,
   ];
 
@@ -521,13 +631,9 @@ function ConditionFields({
           />
         )}
       </Space>
-      <Select
-        placeholder="If not matched, skip to step..."
-        style={{ width: "100%" }}
-        value={step.falseTarget}
-        onChange={(v) => onChange({ falseTarget: v })}
-        options={stepTargetOptions(steps, index)}
-      />
+      <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 0 }}>
+        Connect this step&apos;s green (Yes) and red (No) dots to the next steps on the canvas.
+      </Typography.Paragraph>
     </Space>
   );
 }

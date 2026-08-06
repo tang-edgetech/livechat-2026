@@ -32,15 +32,19 @@ import (
 
 // GetPublicMerchantHandler exposes only what the widget needs to render
 // itself before a chat exists — branding, never anything internal.
-// Unauthenticated by design, same as the rest of this file.
-func GetPublicMerchantHandler(state *appstate.State) gin.HandlerFunc {
+// Unauthenticated by design, same as the rest of this file. canLiveChat
+// is a best-effort hint for which copy/form to show (§ enquiry-form
+// fallback) — the real, authoritative decision happens again at submit
+// time in StartChatHandler, so a stale hint here can't misroute anything.
+func GetPublicMerchantHandler(state *appstate.State, redisClient *redis.Client) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		conn := state.DB()
+		var merchantID int64
 		var name, status string
 		var widgetConfig sql.NullString
 		if err := conn.QueryRow(
-			`SELECT name, status, widget_config FROM merchant WHERE code = ?`, c.Param("code"),
-		).Scan(&name, &status, &widgetConfig); err != nil {
+			`SELECT id, name, status, widget_config FROM merchant WHERE code = ?`, c.Param("code"),
+		).Scan(&merchantID, &name, &status, &widgetConfig); err != nil {
 			c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
 			return
 		}
@@ -48,8 +52,23 @@ func GetPublicMerchantHandler(state *appstate.State) gin.HandlerFunc {
 			c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"name": name, "widgetConfig": widgetConfig.String})
+
+		canLiveChat, _ := canStartLiveChat(context.Background(), conn, redisClient, merchantID, false)
+		c.JSON(http.StatusOK, gin.H{"name": name, "widgetConfig": widgetConfig.String, "canLiveChat": canLiveChat})
 	}
+}
+
+// canStartLiveChat decides whether a new chat for merchantID can go
+// through the normal bot-or-route path, or whether nobody/nothing could
+// plausibly answer it right now (item 4's enquiry-form fallback). A VIP
+// visitor skips the bot check entirely — VIP routing never defers to a
+// bot flow (routeNewChat below) — so only agent availability counts.
+func canStartLiveChat(ctx context.Context, conn *sql.DB, redisClient *redis.Client, merchantID int64, isVIP bool) (bool, error) {
+	available, err := routing.AnyAvailableAgent(ctx, conn, redisClient, merchantID)
+	if err != nil || available || isVIP {
+		return available, err
+	}
+	return botengine.HasActiveFlow(conn, merchantID)
 }
 
 type startChatRequest struct {
@@ -59,6 +78,12 @@ type startChatRequest struct {
 	DisplayName      string `json:"displayName"`
 	PassthroughToken string `json:"passthroughToken"`
 	PageURL          string `json:"pageUrl"`
+	// Message is only meaningful when this lands as an 'enquiry' (nobody
+	// reachable right now) — it becomes the chat's opening message so an
+	// operator sees what the visitor actually wanted before inviting them
+	// in (overview.md item 4). Ignored otherwise; the normal live-chat
+	// pre-chat form has no such field.
+	Message string `json:"message"`
 }
 
 type openChat struct {
@@ -73,7 +98,7 @@ type openChat struct {
 func findOpenChat(conn *sql.DB, visitorID int64) (*openChat, error) {
 	var oc openChat
 	err := conn.QueryRow(
-		`SELECT uuid, status FROM chat WHERE visitor_id = ? AND status IN ('pending','active','bot') ORDER BY started_at DESC LIMIT 1`,
+		`SELECT uuid, status FROM chat WHERE visitor_id = ? AND status IN ('pending','active','bot','enquiry') ORDER BY started_at DESC LIMIT 1`,
 		visitorID,
 	).Scan(&oc.uuid, &oc.status)
 	if err != nil {
@@ -211,10 +236,34 @@ func StartChatHandler(state *appstate.State, hub *ws.Hub, redisClient *redis.Cli
 		}
 		applyAutomationGreeting(conn, hub, chatID, merchantID, evalCtx)
 
-		status, err := routeNewChat(context.Background(), conn, hub, redisClient, chatID, merchantID, v.Tier, evalCtx)
-		if err != nil {
+		var status string
+		if canLive, err := canStartLiveChat(context.Background(), conn, redisClient, merchantID, v.Tier == "vip"); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error", "detail": err.Error()})
 			return
+		} else if !canLive {
+			// Nobody/nothing could plausibly answer this right now — park
+			// it as an enquiry instead of a live chat with no one coming
+			// (overview.md item 4). The visitor's own message becomes the
+			// chat's opening line so an operator sees it before inviting
+			// them in.
+			if _, err := conn.Exec(`UPDATE chat SET status = 'enquiry' WHERE id = ?`, chatID); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error", "detail": err.Error()})
+				return
+			}
+			if msg := req.Message; msg != "" {
+				// Staff only ever see this message via the REST fetch once
+				// they open the chat (there's no assigned agent to push a
+				// live WS "message" event to yet) — notifyChatUpdated
+				// below is what actually alerts the Chats list.
+				insertMessage(conn, chatID, "visitor", &v.ID, msg, "text", nil)
+			}
+			status = "enquiry"
+		} else {
+			status, err = routeNewChat(context.Background(), conn, hub, redisClient, chatID, merchantID, v.Tier, evalCtx)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error", "detail": err.Error()})
+				return
+			}
 		}
 
 		notifyChatUpdated(conn, hub, merchantID, chatUUID)

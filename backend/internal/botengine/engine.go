@@ -61,6 +61,24 @@ type candidateFlow struct {
 	Flow    string
 }
 
+// HasActiveFlow reports whether merchantID has any active chat_start bot
+// flow configured at all, ignoring its trigger conditions — used as a
+// cheap upfront check (widget/routing's enquiry-form fallback) for "could
+// a bot plausibly handle this visitor", without running the full
+// condition-matching TryStart would do once a chat actually exists.
+func HasActiveFlow(conn *sql.DB, merchantID int64) (bool, error) {
+	var exists bool
+	err := conn.QueryRow(
+		`SELECT EXISTS(
+		   SELECT 1 FROM bot_flow bf
+		   LEFT JOIN bot_flow_merchant bfm ON bfm.bot_flow_id = bf.id
+		   WHERE bf.is_active = TRUE AND (bf.is_global = TRUE OR bfm.merchant_id = ?)
+		 )`,
+		merchantID,
+	).Scan(&exists)
+	return exists, err
+}
+
 // TryStart looks for the first active chat_start bot flow in scope for
 // merchantID whose trigger conditions match ctx, and if found, puts the
 // chat into bot-driven mode and runs it from the entry node. Returns

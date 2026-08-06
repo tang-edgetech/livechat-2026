@@ -428,6 +428,77 @@ func ForcePasswordHandler(state *appstate.State) gin.HandlerFunc {
 	}
 }
 
+// ForceLogoutHandler (item 5): Admin/Super Admin kicks a specific user out
+// right now, without deactivating their account. Deleting every session
+// row is enough — session.Validate already treats a missing row as
+// ErrNotFound, and the frontend's existing heartbeat already surfaces
+// that as the "Session expired" modal (AuthContext.tsx), so no new
+// real-time push is needed here to make it feel immediate.
+func ForceLogoutHandler(state *appstate.State) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		conn := state.DB()
+		actorRole := c.MustGet("role").(string)
+		actorID := c.MustGet("user_id").(int64)
+
+		targetID, _, err := resolveTarget(conn, actorRole, actorID, c.Param("uuid"))
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+			return
+		}
+
+		if _, err := conn.Exec(`DELETE FROM session WHERE user_id = ?`, targetID); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
+			return
+		}
+		audit.Log(conn, audit.Entry{
+			UserID: &actorID, Category: "user", Message: "user force-logged-out",
+			StatusCode: 200, Source: "web", IPAddress: c.ClientIP(),
+		})
+		c.JSON(http.StatusOK, gin.H{"ok": true})
+	}
+}
+
+type bulkForceLogoutRequest struct {
+	UUIDs []string `json:"uuids" binding:"required"`
+}
+
+// BulkForceLogoutHandler mirrors BulkSetUserStatusHandler's shape: same
+// resolveTarget scoping per target, best-effort (invalid/out-of-scope
+// targets are skipped, not fatal to the batch).
+func BulkForceLogoutHandler(state *appstate.State) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		conn := state.DB()
+		actorRole := c.MustGet("role").(string)
+		actorID := c.MustGet("user_id").(int64)
+
+		var req bulkForceLogoutRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request"})
+			return
+		}
+
+		applied, skipped := 0, 0
+		for _, u := range req.UUIDs {
+			targetID, _, err := resolveTarget(conn, actorRole, actorID, u)
+			if err != nil {
+				skipped++
+				continue
+			}
+			if _, err := conn.Exec(`DELETE FROM session WHERE user_id = ?`, targetID); err != nil {
+				skipped++
+				continue
+			}
+			applied++
+		}
+
+		audit.Log(conn, audit.Entry{
+			UserID: &actorID, Category: "user", Message: "bulk force-logout (" + strconv.Itoa(applied) + " applied)",
+			StatusCode: 200, Source: "web", IPAddress: c.ClientIP(),
+		})
+		c.JSON(http.StatusOK, gin.H{"applied": applied, "skipped": skipped})
+	}
+}
+
 type merchantGrantRequest struct {
 	MerchantUUID string `json:"merchantUuid" binding:"required"`
 }

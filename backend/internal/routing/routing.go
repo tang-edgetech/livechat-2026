@@ -8,6 +8,7 @@ package routing
 import (
 	"context"
 	"database/sql"
+	"strings"
 
 	"github.com/redis/go-redis/v9"
 
@@ -94,11 +95,19 @@ func pickOnline(ctx context.Context, conn *sql.DB, redisClient *redis.Client, me
 		onlineSet[id] = true
 	}
 
-	var onlineCandidates []int64
+	var connectedCandidates []int64
 	for _, id := range candidates {
 		if onlineSet[id] {
-			onlineCandidates = append(onlineCandidates, id)
+			connectedCandidates = append(connectedCandidates, id)
 		}
+	}
+	if len(connectedCandidates) == 0 {
+		return nil, nil
+	}
+
+	onlineCandidates, err := filterAvailable(conn, connectedCandidates)
+	if err != nil {
+		return nil, err
 	}
 	if len(onlineCandidates) == 0 {
 		return nil, nil
@@ -147,4 +156,74 @@ func RouteVIP(ctx context.Context, conn *sql.DB, redisClient *redis.Client, merc
 	}
 
 	return Route(ctx, conn, redisClient, merchantID)
+}
+
+// filterAvailable narrows a candidate list (already known to hold a live
+// WebSocket connection) down to whoever hasn't manually set themselves
+// Offline (Sidebar's status toggle) — a plain SQL filter rather than
+// another presence.* call since manual_status lives on `user`, not Redis.
+func filterAvailable(conn *sql.DB, ids []int64) ([]int64, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	rows, err := conn.Query(`SELECT id FROM user WHERE id IN (`+placeholders+`) AND manual_status = 'online'`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, nil
+}
+
+// AnyAvailableAgent reports whether at least one Agent for merchantID is
+// both actually connected (ws.Hub presence) and hasn't set themselves
+// Offline right now — the widget's "is anyone able to answer this" check
+// (overview.md item: enquiry-form fallback when nobody's reachable).
+// Read-only: unlike pickOnline it never mutates last_routed_agent_id.
+func AnyAvailableAgent(ctx context.Context, conn *sql.DB, redisClient *redis.Client, merchantID int64) (bool, error) {
+	agents, err := merchantAgentIDs(conn, merchantID)
+	if err != nil {
+		return false, err
+	}
+	if len(agents) == 0 {
+		return false, nil
+	}
+
+	online, err := presence.OnlineUserIDs(ctx, redisClient)
+	if err != nil {
+		return false, err
+	}
+	onlineSet := make(map[int64]bool, len(online))
+	for _, id := range online {
+		onlineSet[id] = true
+	}
+
+	var connected []int64
+	for _, id := range agents {
+		if onlineSet[id] {
+			connected = append(connected, id)
+		}
+	}
+	if len(connected) == 0 {
+		return false, nil
+	}
+
+	available, err := filterAvailable(conn, connected)
+	if err != nil {
+		return false, err
+	}
+	return len(available) > 0, nil
 }

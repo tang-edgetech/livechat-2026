@@ -2,11 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { Button, Space, Table, Tag, Tooltip, message } from "antd";
-import { EditOutlined, PlusOutlined } from "@ant-design/icons";
+import { EditOutlined, LogoutOutlined, PlusOutlined } from "@ant-design/icons";
 import { useRouter } from "next/navigation";
 import dayjs from "dayjs";
 
-import { apiGet, apiPatch, ApiError } from "@/lib/api";
+import { apiGet, apiPatch, apiPost, ApiError } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { confirmAction } from "@/components/modals/confirm";
 import { titleCase } from "@/lib/format";
@@ -55,6 +55,46 @@ export function UsersTab() {
     });
   }
 
+  function forceLogout(target: StaffUser) {
+    confirmAction({
+      title: "Force this user out?",
+      content: `${target.display_name} will be signed out of every device right now. This doesn't deactivate their account — they can just log back in.`,
+      okText: "Force Logout",
+      danger: true,
+      onConfirm: async () => {
+        try {
+          await apiPost(`/api/users/${target.uuid}/force-logout`);
+          message.success("User signed out");
+        } catch (err) {
+          message.error(err instanceof ApiError ? err.message : "Could not sign the user out");
+        }
+      },
+    });
+  }
+
+  function bulkForceLogout() {
+    confirmAction({
+      title: `Force out ${selectedUuids.length} account(s)?`,
+      content: "Each will be signed out of every device right now — this doesn't deactivate their accounts.",
+      okText: "Force Logout",
+      danger: true,
+      onConfirm: async () => {
+        setBulkApplying(true);
+        try {
+          const res = await apiPost<{ applied: number; skipped: number }>("/api/users/bulk-force-logout", {
+            uuids: selectedUuids,
+          });
+          message.success(`${res.applied} signed out${res.skipped ? `, ${res.skipped} skipped` : ""}`);
+          setSelectedUuids([]);
+        } catch (err) {
+          message.error(err instanceof ApiError ? err.message : "Bulk force-logout failed");
+        } finally {
+          setBulkApplying(false);
+        }
+      },
+    });
+  }
+
   function bulkSetStatus(status: "active" | "inactive") {
     confirmAction({
       title: `${status === "active" ? "Activate" : "Deactivate"} ${selectedUuids.length} account(s)?`,
@@ -89,6 +129,9 @@ export function UsersTab() {
               </Button>
               <Button loading={bulkApplying} danger onClick={() => bulkSetStatus("inactive")}>
                 Deactivate Selected
+              </Button>
+              <Button loading={bulkApplying} danger onClick={bulkForceLogout}>
+                Force Logout Selected
               </Button>
             </>
           )}
@@ -162,6 +205,11 @@ export function UsersTab() {
                   <Button size="small" onClick={() => quickToggle(record)}>
                     {record.status === "active" ? "Deactivate" : "Activate"}
                   </Button>
+                )}
+                {record.uuid !== user?.uuid && (
+                  <Tooltip title="Force logout">
+                    <Button size="small" danger icon={<LogoutOutlined />} onClick={() => forceLogout(record)} />
+                  </Tooltip>
                 )}
                 <Tooltip title="Edit">
                   <Button

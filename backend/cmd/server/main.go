@@ -139,6 +139,8 @@ func main() {
 		users.PATCH("/:uuid/status", handlers.SetUserStatusHandler(state))
 		users.PATCH("/bulk-status", handlers.BulkSetUserStatusHandler(state))
 		users.POST("/:uuid/force-password", handlers.ForcePasswordHandler(state))
+		users.POST("/:uuid/force-logout", handlers.ForceLogoutHandler(state))
+		users.POST("/bulk-force-logout", handlers.BulkForceLogoutHandler(state))
 		users.POST("/:uuid/merchants", handlers.GrantUserMerchantHandler(state))
 		users.DELETE("/:uuid/merchants/:merchantUuid", handlers.RevokeUserMerchantHandler(state))
 		users.PATCH("/:uuid/merchants/:merchantUuid", handlers.SetHandlesVipHandler(state))
@@ -149,6 +151,7 @@ func main() {
 		staffChats.GET("", handlers.ListChatsHandler(state))
 		staffChats.GET("/:uuid", handlers.GetChatHandler(state))
 		staffChats.POST("/:uuid/claim", handlers.ClaimChatHandler(state, hub))
+		staffChats.POST("/:uuid/invite", handlers.InviteChatHandler(state, hub))
 		staffChats.POST("/:uuid/assign", handlers.AssignChatHandler(state, hub))
 		staffChats.POST("/:uuid/close", handlers.CloseChatHandler(state, hub))
 		staffChats.POST("/:uuid/messages", handlers.SendMessageHandler(state, hub))
@@ -228,7 +231,7 @@ func main() {
 		visitorChats.POST("/chats/:uuid/messages", handlers.SendVisitorMessageHandler(state, hub, redisClient, messageLimiter))
 		visitorChats.POST("/chats/:uuid/files", handlers.UploadVisitorFileHandler(state, hub, fileDriver))
 		visitorChats.GET("/files/:uuid", handlers.DownloadVisitorFileHandler(state, fileDriver))
-		visitorChats.GET("/merchant/:code", handlers.GetPublicMerchantHandler(state))
+		visitorChats.GET("/merchant/:code", handlers.GetPublicMerchantHandler(state, redisClient))
 
 		// B2B auto-login deep link (overview.md §6.5) — unauthenticated by
 		// design, same posture as the visitor group above: nothing is

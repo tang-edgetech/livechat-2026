@@ -11,11 +11,12 @@ import { STATUS_COLOR, type ChatSummary } from "@/lib/chatTypes";
 import { titleCase } from "@/lib/format";
 import type { Merchant } from "@/lib/types";
 
-const STATUS_DOT: Record<ChatSummary["status"], "success" | "warning" | "default" | "processing"> = {
+const STATUS_DOT: Record<ChatSummary["status"], "success" | "warning" | "default" | "processing" | "error"> = {
   active: "success",
   pending: "warning",
   closed: "default",
   bot: "processing",
+  enquiry: "error",
 };
 
 export default function ChatsPage() {
@@ -102,7 +103,7 @@ export default function ChatsPage() {
               setPage(1);
               setStatus(v);
             }}
-            options={["active", "pending", "closed", "bot"].map((s) => ({ value: s, label: titleCase(s) }))}
+            options={["active", "pending", "enquiry", "closed", "bot"].map((s) => ({ value: s, label: titleCase(s) }))}
           />
           {merchants.length > 1 && (
             <Select

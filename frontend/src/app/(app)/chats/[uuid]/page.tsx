@@ -81,6 +81,17 @@ export default function ChatConversationPage() {
     });
   }
 
+  function invite() {
+    confirmAction({
+      title: "Invite this customer into a live chat?",
+      content: "You'll become the assigned agent and they'll be brought straight into the conversation.",
+      onConfirm: async () => {
+        await apiPost(`/api/chats/${uuid}/invite`);
+        load();
+      },
+    });
+  }
+
   function close() {
     confirmAction({
       title: "Close this chat?",
@@ -113,6 +124,7 @@ export default function ChatConversationPage() {
   const canReply = chat.status === "active";
   const isClosed = chat.status === "closed";
   const canClaim = chat.status === "pending";
+  const canInvite = chat.status === "enquiry";
 
   return (
     <div className="flex h-full flex-col gap-4">
@@ -125,6 +137,11 @@ export default function ChatConversationPage() {
             <Tag color={STATUS_COLOR[chat.status]}>{titleCase(chat.status)}</Tag>
           </div>
           <Space>
+            {canInvite && (
+              <Button type="primary" onClick={invite}>
+                Invite to Chat
+              </Button>
+            )}
             {canClaim && (
               <Button type="primary" onClick={claim}>
                 Claim

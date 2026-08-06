@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Button, Card, Input, InputNumber, Space, Typography, message } from "antd";
+import { Button, Input, InputNumber, Space, Typography, message } from "antd";
 
 import { apiGet, apiPatch, ApiError } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
@@ -57,7 +57,7 @@ export function GeneralTab() {
   if (loading) return null;
 
   return (
-    <Card loading={loading} style={{ maxWidth: 480 }}>
+    <div>
       <Space orientation="vertical" style={{ width: "100%" }}>
         <div>
           <Typography.Text strong>Site title</Typography.Text>
@@ -89,6 +89,6 @@ export function GeneralTab() {
           <Typography.Text type="secondary">Only a Super Admin can change these values.</Typography.Text>
         )}
       </Space>
-    </Card>
+    </div>
   );
 }

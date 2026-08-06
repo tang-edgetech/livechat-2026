@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Button, Table, Tag, Tooltip, Typography, message } from "antd";
+import { Button, Table, Tag, Tooltip, message } from "antd";
 import { DeleteOutlined, EditOutlined, PlusOutlined } from "@ant-design/icons";
 import { useRouter } from "next/navigation";
 
@@ -41,9 +41,6 @@ export function BotTab() {
 
   return (
     <div className="flex flex-col gap-4">
-      <Typography.Paragraph type="secondary">
-        Build a step-by-step bot that greets visitors, asks a few questions, and hands off to an Agent — no code.
-      </Typography.Paragraph>
       <div>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => router.push("/settings/bot-flows/new")}>
           Create Bot Flow

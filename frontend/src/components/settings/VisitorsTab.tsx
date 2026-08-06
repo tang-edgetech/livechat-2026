@@ -82,11 +82,6 @@ export function VisitorsTab() {
 
   return (
     <div className="flex flex-col gap-4">
-      <Typography.Paragraph type="secondary">
-        Search for a visitor by name, phone, or email to correct their email, or merge two records that turned
-        out to be the same person (e.g. they came back with a new phone number).
-      </Typography.Paragraph>
-
       <Input.Search
         placeholder="Search visitors"
         onSearch={(v) => {

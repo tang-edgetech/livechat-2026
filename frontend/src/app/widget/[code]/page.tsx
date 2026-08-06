@@ -26,14 +26,16 @@ export default function WidgetPage() {
 
   const [merchantName, setMerchantName] = useState<string | null>(null);
   const [config, setConfig] = useState<WidgetConfig>({});
+  const [canLiveChat, setCanLiveChat] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    apiGet<{ name: string; widgetConfig: string }>(`/api/visitor/merchant/${code}`)
+    apiGet<{ name: string; widgetConfig: string; canLiveChat: boolean }>(`/api/visitor/merchant/${code}`)
       .then((res) => {
         setMerchantName(res.name);
+        setCanLiveChat(res.canLiveChat);
         try {
           setConfig(res.widgetConfig ? JSON.parse(res.widgetConfig) : {});
         } catch {
@@ -111,6 +113,7 @@ export default function WidgetPage() {
           parentUrl={parentUrl}
           onStarted={startSession}
           accent={accent}
+          canLiveChat={canLiveChat}
         />
       )}
     </div>
@@ -123,16 +126,19 @@ function PreChatForm({
   parentUrl,
   onStarted,
   accent,
+  canLiveChat,
 }: {
   merchantCode: string;
   passthroughToken: string | null;
   parentUrl: string;
   onStarted: (s: Session) => void;
   accent: string;
+  canLiveChat: boolean;
 }) {
   const [phone, setPhone] = useState("");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [enquiryMessage, setEnquiryMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const attemptedPassthrough = useRef(false);
 
@@ -141,7 +147,7 @@ function PreChatForm({
     try {
       const body = passthroughOnly
         ? { merchantCode, passthroughToken, pageUrl: parentUrl }
-        : { merchantCode, phone, email, displayName: name, pageUrl: parentUrl };
+        : { merchantCode, phone, email, displayName: name, pageUrl: parentUrl, message: enquiryMessage };
       const res = await apiPost<Session>("/api/visitor/start", body);
       onStarted(res);
     } catch (err) {
@@ -169,17 +175,36 @@ function PreChatForm({
     );
   }
 
+  // No one (agent or bot) could plausibly answer right now — frame this
+  // as a message-us form instead of "start chat", and require the
+  // message itself since it becomes the enquiry's opening line for
+  // whoever invites this visitor in later (overview.md item 4). The
+  // backend re-checks availability independently at submit time, so a
+  // stale canLiveChat snapshot here can't misroute anything — worst case
+  // the copy briefly doesn't match, never the actual outcome.
+  const canSubmit = canLiveChat ? Boolean(phone) : Boolean(phone && enquiryMessage.trim());
+
   return (
     <div className="flex flex-1 flex-col justify-center gap-3 p-5">
       <Typography.Title level={5} style={{ marginBottom: 0 }}>
-        Let&apos;s get started
+        {canLiveChat ? "Let's get started" : "Leave us a message"}
       </Typography.Title>
-      <Typography.Text type="secondary">Tell us a bit about yourself so we can help you.</Typography.Text>
+      <Typography.Text type="secondary">
+        {canLiveChat
+          ? "Tell us a bit about yourself so we can help you."
+          : "Nobody's available right now, but tell us what you need and we'll invite you back for a live chat as soon as someone is."}
+      </Typography.Text>
       <Input placeholder="Phone number" value={phone} onChange={(e) => setPhone(e.target.value)} />
       <Input placeholder="Your name" value={name} onChange={(e) => setName(e.target.value)} />
       <Input placeholder="Email (optional)" value={email} onChange={(e) => setEmail(e.target.value)} />
-      <Button type="primary" block loading={submitting} disabled={!phone} onClick={() => submit(false)} style={{ backgroundColor: accent, borderColor: accent }}>
-        Start chat
+      <Input.TextArea
+        placeholder={canLiveChat ? "How can we help? (optional)" : "How can we help?"}
+        rows={3}
+        value={enquiryMessage}
+        onChange={(e) => setEnquiryMessage(e.target.value)}
+      />
+      <Button type="primary" block loading={submitting} disabled={!canSubmit} onClick={() => submit(false)} style={{ backgroundColor: accent, borderColor: accent }}>
+        {canLiveChat ? "Start chat" : "Send message"}
       </Button>
     </div>
   );
@@ -216,6 +241,10 @@ function ChatWindow({ session, accent }: { session: Session; accent: string }) {
   useSocket(wsPath, (event) => {
     if (event.type === "message") setMessages((prev) => appendMessage(prev, event.data as ChatMessage));
     if (event.type === "chat_closed") setStatus("closed");
+    // An operator invited this enquiry into a live chat (overview.md item
+    // 4) — flip out of the waiting screen the same lightweight way
+    // chat_closed does, no full reload needed.
+    if (event.type === "chat_invited") setStatus("active");
   });
 
   async function send(overrideBody?: string) {
@@ -241,11 +270,12 @@ function ChatWindow({ session, accent }: { session: Session; accent: string }) {
   }
 
   const isClosed = status === "closed";
+  const isEnquiry = status === "enquiry";
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden p-3">
       <div className="flex-1 overflow-y-auto flex flex-col gap-2 pr-1">
-        {messages.length === 0 && (
+        {messages.length === 0 && !isEnquiry && (
           <Typography.Text type="secondary" style={{ textAlign: "center", marginTop: 16 }}>
             We&apos;ll be right with you.
           </Typography.Text>
@@ -269,6 +299,12 @@ function ChatWindow({ session, accent }: { session: Session; accent: string }) {
             </div>
           </div>
         ))}
+        {isEnquiry && (
+          <Typography.Text type="secondary" style={{ textAlign: "center", marginTop: 8 }}>
+            Thanks — we&apos;ve got your message. We&apos;ll invite you back here as soon as someone&apos;s
+            available.
+          </Typography.Text>
+        )}
         {isClosed && (
           <Typography.Text type="secondary" style={{ textAlign: "center", marginTop: 8 }}>
             This chat has ended. Thanks for reaching out!
@@ -277,17 +313,23 @@ function ChatWindow({ session, accent }: { session: Session; accent: string }) {
         <div ref={bottomRef} />
       </div>
       <Space.Compact style={{ width: "100%", marginTop: 8 }}>
-        <Upload beforeUpload={uploadFile} showUploadList={false} disabled={isClosed}>
-          <Button icon={<PaperClipOutlined />} disabled={isClosed} />
+        <Upload beforeUpload={uploadFile} showUploadList={false} disabled={isClosed || isEnquiry}>
+          <Button icon={<PaperClipOutlined />} disabled={isClosed || isEnquiry} />
         </Upload>
         <Input
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onPressEnter={() => send()}
-          disabled={isClosed}
-          placeholder={isClosed ? "Chat ended" : "Type a message"}
+          disabled={isClosed || isEnquiry}
+          placeholder={isClosed ? "Chat ended" : isEnquiry ? "Waiting for an agent to invite you..." : "Type a message"}
         />
-        <Button type="primary" icon={<SendOutlined />} onClick={() => send()} disabled={isClosed} style={{ backgroundColor: isClosed ? undefined : accent, borderColor: isClosed ? undefined : accent }} />
+        <Button
+          type="primary"
+          icon={<SendOutlined />}
+          onClick={() => send()}
+          disabled={isClosed || isEnquiry}
+          style={{ backgroundColor: isClosed || isEnquiry ? undefined : accent, borderColor: isClosed || isEnquiry ? undefined : accent }}
+        />
       </Space.Compact>
     </div>
   );

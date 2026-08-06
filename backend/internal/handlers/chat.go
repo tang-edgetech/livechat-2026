@@ -316,6 +316,41 @@ func ClaimChatHandler(state *appstate.State, hub *ws.Hub) gin.HandlerFunc {
 	}
 }
 
+// InviteChatHandler: an operator promotes an 'enquiry' (nobody was
+// reachable when it landed — overview.md item 4) into a live chat,
+// assigning themselves as PIC and nudging the visitor's widget out of its
+// waiting screen. Mirrors ClaimChatHandler's shape but only applies to
+// the enquiry status, and additionally has to notify the visitor side
+// directly since — unlike a claim — the visitor's widget has no assigned
+// agent subject to already be listening for a "message" push.
+func InviteChatHandler(state *appstate.State, hub *ws.Hub) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		conn := state.DB()
+		role := c.MustGet("role").(string)
+		userID := c.MustGet("user_id").(int64)
+
+		ref, err := chatAccess(conn, role, userID, c.Param("uuid"))
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+			return
+		}
+		if ref.Status != "enquiry" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "not_an_enquiry"})
+			return
+		}
+
+		if _, err := conn.Exec(`UPDATE chat SET agent_id = ?, status = 'active' WHERE id = ?`, userID, ref.ID); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
+			return
+		}
+
+		audit.Log(conn, audit.Entry{MerchantID: &ref.MerchantID, UserID: &userID, Category: "chat", Message: "enquiry invited to live chat", StatusCode: 200, Source: "web", IPAddress: c.ClientIP()})
+		hub.Publish(ws.VisitorSubject(ref.VisitorID), ws.Event{Type: "chat_invited", Data: gin.H{"chatUuid": c.Param("uuid")}})
+		notifyChatUpdated(conn, hub, ref.MerchantID, c.Param("uuid"))
+		c.JSON(http.StatusOK, gin.H{"ok": true})
+	}
+}
+
 type assignChatRequest struct {
 	AgentUUID string `json:"agentUuid" binding:"required"`
 }

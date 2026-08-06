@@ -180,11 +180,6 @@ export function AutomationTab() {
 
   return (
     <div className="flex flex-col gap-4">
-      <Typography.Paragraph type="secondary">
-        Show visitors a message automatically when they open the chat — a greeting, or a targeted message based on
-        what page they&apos;re on or what time it is.
-      </Typography.Paragraph>
-
       {!creating ? (
         <div>
           <Button type="primary" onClick={startCreate}>

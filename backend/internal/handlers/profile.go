@@ -12,15 +12,18 @@ import (
 )
 
 var validThemes = map[string]bool{"light": true, "dark": true, "violet": true}
+var validManualStatuses = map[string]bool{"online": true, "offline": true}
 
 type updateProfileRequest struct {
 	DisplayName     *string `json:"displayName"`
 	ThemePreference *string `json:"themePreference"`
+	ManualStatus    *string `json:"manualStatus"`
 }
 
-// UpdateProfileHandler: any user, self-service display name and/or
-// Appearance preference (overview.md §6.2) — both optional so the
-// Appearance picker can update just the theme without resending the name.
+// UpdateProfileHandler: any user, self-service display name, Appearance
+// preference, and availability status (overview.md §6.2/item 4) — all
+// optional so e.g. the Sidebar's status toggle can update just that
+// field without resending name/theme.
 func UpdateProfileHandler(state *appstate.State) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		conn := state.DB()
@@ -35,6 +38,10 @@ func UpdateProfileHandler(state *appstate.State) gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_theme"})
 			return
 		}
+		if req.ManualStatus != nil && !validManualStatuses[*req.ManualStatus] {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_status"})
+			return
+		}
 
 		if req.DisplayName != nil {
 			if _, err := conn.Exec(`UPDATE user SET display_name = ? WHERE id = ?`, *req.DisplayName, userID); err != nil {
@@ -44,6 +51,12 @@ func UpdateProfileHandler(state *appstate.State) gin.HandlerFunc {
 		}
 		if req.ThemePreference != nil {
 			if _, err := conn.Exec(`UPDATE user SET theme_preference = ? WHERE id = ?`, *req.ThemePreference, userID); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
+				return
+			}
+		}
+		if req.ManualStatus != nil {
+			if _, err := conn.Exec(`UPDATE user SET manual_status = ? WHERE id = ?`, *req.ManualStatus, userID); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
 				return
 			}

@@ -10,14 +10,13 @@ import { theme as antdTheme, type ThemeConfig } from "antd";
 // fought here); shadows are reserved for true overlays (dropdowns/modals),
 // not resting cards.
 //
-// Known tradeoff (carried over from the first redesign pass): static
-// `message.*`/`Modal.confirm` (used throughout via the shared
-// `confirmAction`, see components/modals/confirm.tsx) don't consume this
-// dynamic theme — they're called imperatively from event handlers, not
-// JSX, so they can't trivially move to the `App.useApp()` hook pattern
-// that would theme-match them. They keep antd's stock look (functionally
-// unaffected) plus a harmless known console warning. Migrating that is a
-// separate, real architectural change — not bundled into this redesign.
+// `confirmAction` (components/modals/confirm.tsx) is bridged to this dynamic
+// theme via ThemedApp.tsx's <ThemeBridge> despite being called imperatively
+// from event handlers rather than JSX. Remaining known tradeoff: plain
+// `message.*` static calls elsewhere are NOT bridged the same way yet —
+// they keep antd's stock unthemed look plus a harmless console warning.
+// Migrating those means touching each call site's import, a separate,
+// lower-priority cleanup — not bundled into this redesign.
 export type ThemeKey = "light" | "dark" | "violet";
 
 export const THEME_KEYS: ThemeKey[] = ["light", "dark", "violet"];

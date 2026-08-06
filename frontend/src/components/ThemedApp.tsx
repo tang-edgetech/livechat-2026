@@ -1,10 +1,25 @@
 "use client";
 
 import { useEffect } from "react";
-import { ConfigProvider } from "antd";
+import { App as AntdApp, ConfigProvider } from "antd";
 
 import { useAuth } from "@/context/AuthContext";
 import { THEMES, resolveTheme } from "@/lib/theme";
+import { setThemedModal } from "@/components/modals/confirm";
+
+// Hands confirmAction's Modal.confirm a context-bound instance the moment
+// antd's <App> mounts, so it renders themed (and warning-free) instead of
+// falling back to the static default look.
+function ThemeBridge() {
+  const { modal } = AntdApp.useApp();
+
+  useEffect(() => {
+    setThemedModal(modal);
+    return () => setThemedModal(null);
+  }, [modal]);
+
+  return null;
+}
 
 // The one place theme state actually lives: resolves the logged-in user's
 // Appearance preference (Profile tab) to an AntD theme, and toggles the
@@ -21,5 +36,12 @@ export function ThemedApp({ children }: { children: React.ReactNode }) {
     document.documentElement.classList.toggle("dark", themeKey === "dark");
   }, [themeKey]);
 
-  return <ConfigProvider theme={THEMES[themeKey]}>{children}</ConfigProvider>;
+  return (
+    <ConfigProvider theme={THEMES[themeKey]}>
+      <AntdApp>
+        <ThemeBridge />
+        {children}
+      </AntdApp>
+    </ConfigProvider>
+  );
 }

@@ -109,10 +109,6 @@ export function CannedMessagesTab() {
 
   return (
     <div className="flex flex-col gap-4">
-      <Typography.Paragraph type="secondary">
-        Ready-made replies your team can insert with one click while chatting.
-      </Typography.Paragraph>
-
       {canManage && (
         <>
           {!creating ? (

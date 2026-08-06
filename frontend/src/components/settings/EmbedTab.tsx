@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Button, Card, Select, Typography, message } from "antd";
+import { Button, Card, Select, message } from "antd";
 
 import { apiGet, apiPatch, ApiError } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
@@ -65,11 +65,6 @@ export function EmbedTab() {
 
   return (
     <div className="flex flex-col gap-4">
-      <Typography.Paragraph type="secondary">
-        Get the snippet to put this chat on a website, and preview it live — open the preview here and pick up
-        the conversation from the Chats list to see real-time messaging between a customer and an Agent.
-      </Typography.Paragraph>
-
       <Select
         placeholder="Choose a merchant"
         style={{ maxWidth: 320 }}

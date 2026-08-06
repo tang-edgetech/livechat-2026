@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Button, Card, InputNumber, Space, Typography, message } from "antd";
+import { Button, InputNumber, Space, Typography, message } from "antd";
 
 import { apiGet, apiPatch, apiPost, ApiError } from "@/lib/api";
 import { confirmAction } from "@/components/modals/confirm";
@@ -84,11 +84,11 @@ export function SystemTab() {
   if (loading) return null;
 
   return (
-    <Card loading={loading} style={{ maxWidth: 480 }}>
+    <div>
       <Space orientation="vertical" style={{ width: "100%" }}>
         <Typography.Paragraph type="secondary">
-          How long each data type is kept before it&apos;s automatically deleted. A daily background job enforces
-          these windows on its own; use &quot;Purge Now&quot; to run it immediately instead of waiting.
+          A daily background job enforces these windows on its own; use &quot;Purge Now&quot; to run it
+          immediately instead of waiting.
         </Typography.Paragraph>
         <div>
           <Typography.Text strong>Audit log retention (days)</Typography.Text>
@@ -115,6 +115,6 @@ export function SystemTab() {
           <Typography.Text type="secondary">Only a Super Admin can change these values.</Typography.Text>
         )}
       </Space>
-    </Card>
+    </div>
   );
 }

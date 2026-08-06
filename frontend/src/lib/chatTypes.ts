@@ -7,7 +7,7 @@ export type ChatSummary = {
   merchant_uuid: string;
   agent_name: string | null;
   agent_email: string | null;
-  status: "active" | "pending" | "closed" | "bot";
+  status: "active" | "pending" | "closed" | "bot" | "enquiry";
   started_at: string;
   last_message_at: string | null;
 };
@@ -28,6 +28,7 @@ export const STATUS_COLOR: Record<ChatSummary["status"], string> = {
   pending: "warning",
   closed: "default",
   bot: "processing",
+  enquiry: "red",
 };
 
 // Messages arrive from two independent channels — the sender's own POST

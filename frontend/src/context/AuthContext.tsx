@@ -10,6 +10,7 @@ export type CurrentUser = {
   email: string;
   role: "super_admin" | "admin" | "agent";
   theme_preference: string;
+  manual_status: "online" | "offline";
 };
 
 type AuthContextValue = {

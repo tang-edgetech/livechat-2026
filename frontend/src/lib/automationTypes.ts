@@ -66,4 +66,7 @@ export type FlowNode = {
 };
 
 export type FlowDef = { nodes: FlowNode[]; entry: string };
-export type TriggerDef = { type: "chat_start"; conditions: ConditionSet };
+// audience gates which visitor tier this flow is even eligible for
+// (overview.md item 3) — omitted/"normal" is the default so existing
+// flows keep never firing for a VIP visitor unless deliberately opted in.
+export type TriggerDef = { type: "chat_start"; conditions: ConditionSet; audience?: "normal" | "vip" | "both" };

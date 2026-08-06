@@ -43,6 +43,23 @@ type TriggerDef struct {
 	Type       string                  `json:"type"`
 	Keyword    string                  `json:"keyword"`
 	Conditions automation.ConditionSet `json:"conditions"`
+	// Audience gates which visitor tier this flow is even eligible for,
+	// independent of Conditions — "" (unset, every flow saved before this
+	// field existed) and "normal" behave identically, so an existing flow
+	// keeps never firing for a VIP visitor unless someone deliberately
+	// opts it in. "vip" / "both" are the opt-in (overview.md item 3).
+	Audience string `json:"audience,omitempty"`
+}
+
+func (t TriggerDef) matchesTier(isVIP bool) bool {
+	switch t.Audience {
+	case "vip":
+		return isVIP
+	case "both":
+		return true
+	default: // "" or "normal"
+		return !isVIP
+	}
 }
 
 type botMessage struct {
@@ -106,12 +123,17 @@ func TryStart(ctx context.Context, conn *sql.DB, hub *ws.Hub, redisClient *redis
 	}
 	rows.Close()
 
+	isVIP := evalCtx["visitor_tier"] == "vip"
+
 	for _, f := range candidates {
 		var trigger TriggerDef
 		if err := json.Unmarshal([]byte(f.Trigger), &trigger); err != nil {
 			continue
 		}
 		if trigger.Type != "chat_start" {
+			continue
+		}
+		if !trigger.matchesTier(isVIP) {
 			continue
 		}
 		if !automation.Evaluate(trigger.Conditions, evalCtx) {

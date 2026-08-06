@@ -109,12 +109,22 @@ func findOpenChat(conn *sql.DB, visitorID int64) (*openChat, error) {
 
 // routeNewChat decides and applies the initial agent_id/status for a
 // freshly-inserted chat — shared by StartChatHandler and
-// CreateChatV1Handler. A VIP visitor (overview.md §6.9.1) skips the bot
-// entirely and goes straight to routing.RouteVIP (which itself falls
-// back to the normal agent pool if no VIP-designated agent is online);
-// everyone else keeps the existing bot-first-then-round-robin path.
+// CreateChatV1Handler. Bot flows get first look regardless of tier — a
+// VIP visitor only ever reaches one if it explicitly opted in via its
+// trigger's Audience (overview.md item 3; botengine.TryStart's
+// matchesTier keeps every pre-existing flow "normal"-only by default, so
+// this doesn't change behavior for anyone who hasn't set that). If no
+// flow claims the chat, VIP falls to routing.RouteVIP (direct-to-agent,
+// itself falling back to the normal pool if no VIP-designated agent is
+// online) and everyone else falls to routing.Route.
 func routeNewChat(ctx context.Context, conn *sql.DB, hub *ws.Hub, redisClient *redis.Client, chatID, merchantID int64, tier string, evalCtx map[string]string) (string, error) {
-	if tier == "vip" {
+	evalCtx["visitor_tier"] = tier
+
+	botStarted, err := botengine.TryStart(ctx, conn, hub, redisClient, chatID, merchantID, evalCtx)
+	if err != nil {
+		return "", err
+	}
+	if !botStarted && tier == "vip" {
 		agentID, status, err := routing.RouteVIP(ctx, conn, redisClient, merchantID)
 		if err != nil {
 			return "", err
@@ -123,11 +133,6 @@ func routeNewChat(ctx context.Context, conn *sql.DB, hub *ws.Hub, redisClient *r
 			return "", err
 		}
 		return status, nil
-	}
-
-	botStarted, err := botengine.TryStart(ctx, conn, hub, redisClient, chatID, merchantID, evalCtx)
-	if err != nil {
-		return "", err
 	}
 	if !botStarted {
 		agentID, status, err := routing.Route(ctx, conn, redisClient, merchantID)

@@ -52,6 +52,7 @@ export function BotFlowEditor({ existing }: { existing?: BotFlow }) {
 
   const [usePageCondition, setUsePageCondition] = useState(false);
   const [pageContains, setPageContains] = useState("");
+  const [audience, setAudience] = useState<"normal" | "vip" | "both">("normal");
 
   const [steps, setSteps] = useState<BuilderStep[]>(() => {
     if (existing) {
@@ -79,6 +80,7 @@ export function BotFlowEditor({ existing }: { existing?: BotFlow }) {
           setUsePageCondition(true);
           setPageContains(String(pageRule.value));
         }
+        setAudience(trigger.audience ?? "normal");
       } catch {
         // ignore
       }
@@ -127,7 +129,7 @@ export function BotFlowEditor({ existing }: { existing?: BotFlow }) {
       logic: "and",
       rules: usePageCondition && pageContains ? [{ field: "page_url", operator: "contains", value: pageContains }] : [],
     };
-    const trigger: TriggerDef = { type: "chat_start", conditions };
+    const trigger: TriggerDef = { type: "chat_start", conditions, audience };
     const flow = stepsToFlow(steps);
 
     setSubmitting(true);
@@ -183,6 +185,26 @@ export function BotFlowEditor({ existing }: { existing?: BotFlow }) {
         </Card>
 
         <Card title="When should this run?">
+          <Typography.Text strong>Who is this for?</Typography.Text>
+          <div style={{ marginTop: 8, marginBottom: 16 }}>
+            <Segmented
+              value={audience}
+              onChange={(v) => setAudience(v as "normal" | "vip" | "both")}
+              options={[
+                { label: "Normal visitors", value: "normal" },
+                { label: "VIP visitors", value: "vip" },
+                { label: "Both", value: "both" },
+              ]}
+            />
+            <Typography.Paragraph type="secondary" style={{ marginTop: 8, marginBottom: 0 }}>
+              {audience === "normal" &&
+                "Default: a VIP visitor skips this flow entirely and goes straight to an available agent (overview.md §6.9.1)."}
+              {audience === "vip" &&
+                "Only VIP visitors reach this flow; a Normal visitor never sees it. Use this for a VIP-specific concierge experience."}
+              {audience === "both" && "Every visitor can reach this flow, regardless of tier."}
+            </Typography.Paragraph>
+          </div>
+
           <Checkbox checked={usePageCondition} onChange={(e) => setUsePageCondition(e.target.checked)}>
             Only when the page contains
           </Checkbox>

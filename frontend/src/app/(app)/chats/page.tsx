@@ -1,15 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Badge, Button, Card, Input, Select, Space, Table, Tag, message } from "antd";
-import { CommentOutlined } from "@ant-design/icons";
+import { Badge, Button, Card, Input, Select, Space, Table, Tag, Tooltip, message } from "antd";
+import { BellOutlined, CommentOutlined } from "@ant-design/icons";
 import { useRouter } from "next/navigation";
 
 import { apiGet, apiPost } from "@/lib/api";
 import { useSocket } from "@/lib/socket";
 import { confirmAction } from "@/components/modals/confirm";
 import { PageHeader } from "@/components/layout/PageHeader";
-import { playNotificationSound } from "@/lib/notificationSound";
+import { isSoundMuted, playNotificationSound, setSoundMuted } from "@/lib/notificationSound";
 import { STATUS_COLOR, type ChatSummary } from "@/lib/chatTypes";
 import { titleCase } from "@/lib/format";
 import type { Merchant } from "@/lib/types";
@@ -34,6 +34,18 @@ export default function ChatsPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [selectedKeys, setSelectedKeys] = useState<React.Key[]>([]);
+  const [muted, setMuted] = useState(false);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reading a per-device localStorage preference on mount.
+    setMuted(isSoundMuted());
+  }, []);
+
+  function toggleMuted() {
+    const next = !muted;
+    setSoundMuted(next);
+    setMuted(next);
+  }
 
   // uuid -> last_message_at last seen, so a chat_updated push can tell
   // "brand new chat" and "customer just wrote in on an existing chat"
@@ -108,7 +120,21 @@ export default function ChatsPage() {
 
   return (
     <div className="flex flex-col gap-4">
-      <PageHeader icon={<CommentOutlined />} title="Chats" description="Every conversation across the merchants you can access." />
+      <PageHeader
+        icon={<CommentOutlined />}
+        title="Chats"
+        description="Every conversation across the merchants you can access."
+        extra={
+          <Tooltip title={muted ? "Sound alerts muted — click to unmute" : "Sound alerts on — click to mute"}>
+            <Button
+              shape="circle"
+              icon={<BellOutlined style={{ opacity: muted ? 0.35 : 1 }} />}
+              onClick={toggleMuted}
+              aria-pressed={!muted}
+            />
+          </Tooltip>
+        }
+      />
 
       <Card>
         <Space orientation="horizontal" style={{ marginBottom: 16, width: "100%", justifyContent: "space-between" }} wrap>
@@ -191,6 +217,17 @@ export default function ChatsPage() {
                   {r.visitor_tier === "vip" && <Tag color="gold">VIP</Tag>}
                 </Space>
               ),
+            },
+            {
+              title: "",
+              key: "unread",
+              width: 36,
+              render: (_, r) =>
+                r.last_message_sender_type === "visitor" && r.status !== "closed" ? (
+                  <Tooltip title="Customer's latest message hasn't been replied to yet">
+                    <span className="inline-block h-2 w-2 rounded-full bg-red-500" />
+                  </Tooltip>
+                ) : null,
             },
             {
               title: "Timestamp",

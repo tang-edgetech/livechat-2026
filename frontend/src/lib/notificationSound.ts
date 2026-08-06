@@ -6,6 +6,21 @@
 // an open chat) without requiring them to be staring at the screen.
 let ctx: AudioContext | null = null;
 
+// A per-device mute preference, deliberately not account-synced like
+// theme_preference/manual_status — whether THIS browser/tab should ding
+// isn't something that should follow the user to another machine.
+const MUTE_KEY = "livechat_sound_muted";
+
+export function isSoundMuted(): boolean {
+  if (typeof window === "undefined") return false;
+  return window.localStorage.getItem(MUTE_KEY) === "1";
+}
+
+export function setSoundMuted(muted: boolean) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(MUTE_KEY, muted ? "1" : "0");
+}
+
 function getContext(): AudioContext | null {
   if (typeof window === "undefined") return null;
   const Ctor = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
@@ -33,6 +48,7 @@ function tone(audioCtx: AudioContext, startAt: number, freq: number, duration: n
 // clicked/typed something (logging in, navigating), so resume() here is
 // just covering the rare case the context started suspended.
 export function playNotificationSound() {
+  if (isSoundMuted()) return;
   const audioCtx = getContext();
   if (!audioCtx) return;
   if (audioCtx.state === "suspended") {

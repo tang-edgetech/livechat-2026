@@ -36,6 +36,12 @@ type chatOut struct {
 	Status        string     `json:"status"`
 	StartedAt     time.Time  `json:"started_at"`
 	LastMessageAt *time.Time `json:"last_message_at"`
+	// LastMessageSenderType lets the frontend tell "a customer just wrote
+	// in" apart from "an agent just replied" on the Chats list without a
+	// second round trip — the sound-alert feature (Telegram request)
+	// needs exactly that distinction to avoid dinging on an agent's own
+	// outgoing message.
+	LastMessageSenderType *string `json:"last_message_sender_type"`
 }
 
 type messageOut struct {
@@ -103,7 +109,8 @@ func ListChatsHandler(state *appstate.State) gin.HandlerFunc {
 		placeholders, args := int64SliceToPlaceholders(merchantIDs)
 
 		query := `SELECT c.uuid, v.display_name, v.uuid, v.tier, m.name, m.uuid,
-		                 u.display_name, u.email, c.status, c.started_at, c.last_message_at
+		                 u.display_name, u.email, c.status, c.started_at, c.last_message_at,
+		                 (SELECT lm.sender_type FROM message lm WHERE lm.chat_id = c.id ORDER BY lm.created_at DESC LIMIT 1)
 		          FROM chat c
 		          JOIN visitor v ON v.id = c.visitor_id
 		          JOIN merchant m ON m.id = c.merchant_id
@@ -160,7 +167,7 @@ func ListChatsHandler(state *appstate.State) gin.HandlerFunc {
 		for rows.Next() {
 			var ch chatOut
 			if err := rows.Scan(&ch.UUID, &ch.VisitorName, &ch.VisitorUUID, &ch.VisitorTier, &ch.MerchantName, &ch.MerchantUUID,
-				&ch.AgentName, &ch.AgentEmail, &ch.Status, &ch.StartedAt, &ch.LastMessageAt); err != nil {
+				&ch.AgentName, &ch.AgentEmail, &ch.Status, &ch.StartedAt, &ch.LastMessageAt, &ch.LastMessageSenderType); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
 				return
 			}
@@ -246,7 +253,8 @@ func GetChatHandler(state *appstate.State) gin.HandlerFunc {
 
 		var summary chatOut
 		if err := conn.QueryRow(
-			`SELECT c.uuid, v.display_name, v.uuid, v.tier, m.name, m.uuid, u.display_name, u.email, c.status, c.started_at, c.last_message_at
+			`SELECT c.uuid, v.display_name, v.uuid, v.tier, m.name, m.uuid, u.display_name, u.email, c.status, c.started_at, c.last_message_at,
+			        (SELECT lm.sender_type FROM message lm WHERE lm.chat_id = c.id ORDER BY lm.created_at DESC LIMIT 1)
 			 FROM chat c
 			 JOIN visitor v ON v.id = c.visitor_id
 			 JOIN merchant m ON m.id = c.merchant_id
@@ -254,7 +262,7 @@ func GetChatHandler(state *appstate.State) gin.HandlerFunc {
 			 WHERE c.id = ?`,
 			ref.ID,
 		).Scan(&summary.UUID, &summary.VisitorName, &summary.VisitorUUID, &summary.VisitorTier, &summary.MerchantName, &summary.MerchantUUID,
-			&summary.AgentName, &summary.AgentEmail, &summary.Status, &summary.StartedAt, &summary.LastMessageAt); err != nil {
+			&summary.AgentName, &summary.AgentEmail, &summary.Status, &summary.StartedAt, &summary.LastMessageAt, &summary.LastMessageSenderType); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
 			return
 		}
@@ -510,7 +518,8 @@ func insertMessage(conn *sql.DB, chatID int64, senderType string, senderID *int6
 func notifyChatUpdated(conn *sql.DB, hub *ws.Hub, merchantID int64, chatUUID string) {
 	var out chatOut
 	err := conn.QueryRow(
-		`SELECT c.uuid, v.display_name, v.uuid, m.name, m.uuid, u.display_name, u.email, c.status, c.started_at, c.last_message_at
+		`SELECT c.uuid, v.display_name, v.uuid, m.name, m.uuid, u.display_name, u.email, c.status, c.started_at, c.last_message_at,
+		        (SELECT lm.sender_type FROM message lm WHERE lm.chat_id = c.id ORDER BY lm.created_at DESC LIMIT 1)
 		 FROM chat c
 		 JOIN visitor v ON v.id = c.visitor_id
 		 JOIN merchant m ON m.id = c.merchant_id
@@ -518,7 +527,7 @@ func notifyChatUpdated(conn *sql.DB, hub *ws.Hub, merchantID int64, chatUUID str
 		 WHERE c.uuid = ?`,
 		chatUUID,
 	).Scan(&out.UUID, &out.VisitorName, &out.VisitorUUID, &out.MerchantName, &out.MerchantUUID,
-		&out.AgentName, &out.AgentEmail, &out.Status, &out.StartedAt, &out.LastMessageAt)
+		&out.AgentName, &out.AgentEmail, &out.Status, &out.StartedAt, &out.LastMessageAt, &out.LastMessageSenderType)
 	if err != nil {
 		return
 	}

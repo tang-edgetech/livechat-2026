@@ -8,6 +8,7 @@ import { useParams } from "next/navigation";
 import { apiFetch, apiGet, apiPost } from "@/lib/api";
 import { useSocket } from "@/lib/socket";
 import { confirmAction } from "@/components/modals/confirm";
+import { playNotificationSound } from "@/lib/notificationSound";
 import { STATUS_COLOR, appendMessage, messageIsHtml, type ChatMessage, type ChatSummary } from "@/lib/chatTypes";
 import { titleCase } from "@/lib/format";
 import { sanitizeHtml } from "@/lib/sanitizeHtml";
@@ -49,6 +50,7 @@ export default function ChatConversationPage() {
       const m = event.data as ChatMessage;
       if (m.chat_uuid === uuid) {
         setMessages((prev) => appendMessage(prev, m));
+        if (m.sender_type === "visitor") playNotificationSound();
       }
     }
     if (event.type === "chat_closed" && (event.data as { chatUuid?: string })?.chatUuid === uuid) {

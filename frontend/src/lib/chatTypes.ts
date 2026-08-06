@@ -10,6 +10,7 @@ export type ChatSummary = {
   status: "active" | "pending" | "closed" | "bot" | "enquiry";
   started_at: string;
   last_message_at: string | null;
+  last_message_sender_type: "visitor" | "agent" | "bot" | "system" | null;
 };
 
 export type ChatMessage = {

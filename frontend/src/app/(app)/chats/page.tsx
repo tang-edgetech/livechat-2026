@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Badge, Button, Card, Input, Select, Space, Table, Tag, message } from "antd";
 import { CommentOutlined } from "@ant-design/icons";
 import { useRouter } from "next/navigation";
@@ -9,6 +9,7 @@ import { apiGet, apiPost } from "@/lib/api";
 import { useSocket } from "@/lib/socket";
 import { confirmAction } from "@/components/modals/confirm";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { playNotificationSound } from "@/lib/notificationSound";
 import { STATUS_COLOR, type ChatSummary } from "@/lib/chatTypes";
 import { titleCase } from "@/lib/format";
 import type { Merchant } from "@/lib/types";
@@ -34,6 +35,14 @@ export default function ChatsPage() {
   const [pageSize, setPageSize] = useState(20);
   const [selectedKeys, setSelectedKeys] = useState<React.Key[]>([]);
 
+  // uuid -> last_message_at last seen, so a chat_updated push can tell
+  // "brand new chat" and "customer just wrote in on an existing chat"
+  // apart from an agent's own outgoing message updating the same field
+  // (sound-alert feature) — seeded from every load(), not just WS pushes,
+  // so the very first push about a chat already on the page doesn't
+  // misread as new.
+  const knownLastMessageAt = useRef<Map<string, string | null>>(new Map());
+
   const load = useCallback(() => {
     const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
     if (status) params.set("status", status);
@@ -44,6 +53,7 @@ export default function ChatsPage() {
       .then((res) => {
         setChats(res.chats);
         setTotal(res.total);
+        for (const c of res.chats) knownLastMessageAt.current.set(c.uuid, c.last_message_at);
       })
       .finally(() => setLoading(false));
   }, [page, pageSize, status, search, merchantUuid]);
@@ -61,9 +71,22 @@ export default function ChatsPage() {
 
   // Live updates: any chat_updated/presence_changed nudge on this
   // account's dashboard subject(s) just triggers a refetch — simplest
-  // correct behavior for Phase 2's scale (overview.md §2/§8).
+  // correct behavior for Phase 2's scale (overview.md §2/§8). A bell
+  // plays for a genuinely new chat, or an existing chat's last message
+  // just came from the visitor — never for an agent's own outgoing
+  // message re-touching last_message_at.
   useSocket("/ws", (event) => {
-    if (event.type === "chat_updated" || event.type === "presence_changed") {
+    if (event.type === "chat_updated") {
+      const chat = event.data as ChatSummary;
+      const prevLastMessageAt = knownLastMessageAt.current.get(chat.uuid);
+      const isNewChat = prevLastMessageAt === undefined;
+      const isNewVisitorMessage =
+        !isNewChat && chat.last_message_sender_type === "visitor" && chat.last_message_at !== prevLastMessageAt;
+      if (isNewChat || isNewVisitorMessage) playNotificationSound();
+      knownLastMessageAt.current.set(chat.uuid, chat.last_message_at);
+      load();
+    }
+    if (event.type === "presence_changed") {
       load();
     }
   });

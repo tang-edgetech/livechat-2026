@@ -56,6 +56,31 @@ export type BotFlow = {
   merchant_uuid: string | null;
 };
 
+export type BotFlowDropOffNode = { node_id: string; label: string; count: number };
+
+// Bot Analytics (GET /api/bot-flows/:id/analytics) — completion/handoff/
+// abandonment rate plus per-node drop-off, so an Admin can see whether a
+// flow is actually working instead of building it blind. Rates are
+// computed over resolved_runs (excludes still-active conversations) and
+// are null when resolved_runs is 0. drop_off_nodes is only meaningful
+// for a "steps" flow — an ai_passthrough flow has no node graph.
+export type BotFlowAnalytics = {
+  bot_flow_id: number;
+  name: string;
+  mode: "steps" | "ai_passthrough";
+  total_runs: number;
+  active_runs: number;
+  resolved_runs: number;
+  completed_runs: number;
+  handoff_runs: number;
+  closed_runs: number;
+  abandoned_runs: number;
+  completion_rate: number | null;
+  handoff_rate: number | null;
+  abandonment_rate: number | null;
+  drop_off_nodes?: BotFlowDropOffNode[];
+};
+
 // Storage shapes (overview.md §4) — the UI never shows this JSON
 // directly, only the plain-language builder that reads/writes it.
 export type ConditionRule = { field: string; operator: string; value: unknown };

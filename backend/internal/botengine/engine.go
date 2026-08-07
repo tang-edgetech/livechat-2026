@@ -181,6 +181,7 @@ func TryStart(ctx context.Context, conn *sql.DB, hub *ws.Hub, redisClient *redis
 		if err != nil {
 			return false, err
 		}
+		recordFlowRunStart(conn, f.ID, chatID, fc.merchantID)
 		if flow.Mode == "ai_passthrough" {
 			if flow.Passthrough != nil && flow.Passthrough.Greeting != "" {
 				fc.sendBotMessage(fc.renderTemplate(flow.Passthrough.Greeting), "text", nil)
@@ -422,6 +423,7 @@ func (fc *flowContext) persistState(nodeID string) error {
 		nodeArg = nodeID
 	}
 	_, err := fc.conn.Exec(`UPDATE chat SET bot_node_id = ?, bot_variables = ? WHERE id = ?`, nodeArg, string(variablesJSON), fc.chatID)
+	fc.recordNode(nodeID)
 	return err
 }
 
@@ -723,6 +725,7 @@ func (fc *flowContext) handoffToAgent(ctx context.Context) error {
 	); err != nil {
 		return err
 	}
+	fc.recordOutcome("handoff", "engine")
 	if agentID != nil {
 		fc.hub.Publish(ws.AgentSubject(*agentID), ws.Event{Type: "chat_updated"})
 	}
@@ -734,6 +737,7 @@ func (fc *flowContext) closeChat() error {
 	if _, err := fc.conn.Exec(`UPDATE chat SET status = 'closed', closed_at = NOW() WHERE id = ?`, fc.chatID); err != nil {
 		return err
 	}
+	fc.recordOutcome("closed", "engine")
 	fc.hub.Publish(ws.VisitorSubject(fc.visitorID), ws.Event{Type: "chat_closed", Data: map[string]string{"chatUuid": fc.chatUUID}})
 	fc.hub.Publish(ws.DashboardSubject(fc.merchantID), ws.Event{Type: "chat_updated"})
 	return nil

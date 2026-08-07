@@ -206,6 +206,7 @@ func main() {
 		botFlows.POST("", handlers.CreateBotFlowHandler(state))
 		botFlows.PATCH("/:id", handlers.UpdateBotFlowHandler(state))
 		botFlows.DELETE("/:id", handlers.DeleteBotFlowHandler(state))
+		botFlows.GET("/:id/analytics", handlers.BotFlowAnalyticsHandler(state))
 
 		// Admin/Super Admin can view; delete is Super Admin only (overview.md §6.7).
 		auditLogs := authed.Group("/audit-logs")

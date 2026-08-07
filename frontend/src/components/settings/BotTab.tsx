@@ -2,17 +2,19 @@
 
 import { useEffect, useState } from "react";
 import { Button, Table, Tag, Tooltip, message } from "antd";
-import { DeleteOutlined, EditOutlined, PlusOutlined } from "@ant-design/icons";
+import { BarChartOutlined, DeleteOutlined, EditOutlined, PlusOutlined } from "@ant-design/icons";
 import { useRouter } from "next/navigation";
 
 import { apiDelete, apiGet } from "@/lib/api";
 import { confirmAction } from "@/components/modals/confirm";
+import { BotFlowAnalyticsDrawer } from "@/components/settings/botflow/BotFlowAnalyticsDrawer";
 import type { BotFlow } from "@/lib/automationTypes";
 
 export function BotTab() {
   const router = useRouter();
   const [flows, setFlows] = useState<BotFlow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [analyticsFlow, setAnalyticsFlow] = useState<BotFlow | null>(null);
 
   function load() {
     setLoading(true);
@@ -67,6 +69,9 @@ export function BotTab() {
             key: "actions",
             render: (_, r) => (
               <>
+                <Tooltip title="Analytics">
+                  <Button type="text" icon={<BarChartOutlined />} onClick={() => setAnalyticsFlow(r)} />
+                </Tooltip>
                 <Tooltip title="Edit">
                   <Button type="text" icon={<EditOutlined />} onClick={() => router.push(`/settings/bot-flows/${r.id}`)} />
                 </Tooltip>
@@ -78,6 +83,7 @@ export function BotTab() {
           },
         ]}
       />
+      <BotFlowAnalyticsDrawer flow={analyticsFlow} open={analyticsFlow !== null} onClose={() => setAnalyticsFlow(null)} />
     </div>
   );
 }

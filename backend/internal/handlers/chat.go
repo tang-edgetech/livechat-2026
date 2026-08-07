@@ -17,6 +17,7 @@ import (
 
 	"livechat/backend/internal/appstate"
 	"livechat/backend/internal/audit"
+	"livechat/backend/internal/botengine"
 	"livechat/backend/internal/htmlguard"
 	"livechat/backend/internal/settings"
 	"livechat/backend/internal/storage"
@@ -317,6 +318,9 @@ func ClaimChatHandler(state *appstate.State, hub *ws.Hub) gin.HandlerFunc {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
 			return
 		}
+		if ref.Status == "bot" {
+			botengine.MarkHandoffByStaff(conn, ref.ID)
+		}
 
 		audit.Log(conn, audit.Entry{MerchantID: &ref.MerchantID, UserID: &userID, Category: "chat", Message: "chat claimed", StatusCode: 200, Source: "web", IPAddress: c.ClientIP()})
 		notifyChatUpdated(conn, hub, ref.MerchantID, c.Param("uuid"))
@@ -404,6 +408,9 @@ func AssignChatHandler(state *appstate.State, hub *ws.Hub) gin.HandlerFunc {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
 			return
 		}
+		if ref.Status == "bot" {
+			botengine.MarkHandoffByStaff(conn, ref.ID)
+		}
 
 		audit.Log(conn, audit.Entry{MerchantID: &ref.MerchantID, UserID: &userID, Category: "chat", Message: "chat reassigned", StatusCode: 200, Source: "web", IPAddress: c.ClientIP()})
 		notifyChatUpdated(conn, hub, ref.MerchantID, c.Param("uuid"))
@@ -426,6 +433,9 @@ func CloseChatHandler(state *appstate.State, hub *ws.Hub) gin.HandlerFunc {
 		if _, err := conn.Exec(`UPDATE chat SET status = 'closed', closed_at = NOW() WHERE id = ?`, ref.ID); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
 			return
+		}
+		if ref.Status == "bot" {
+			botengine.MarkClosedByStaff(conn, ref.ID)
 		}
 
 		audit.Log(conn, audit.Entry{MerchantID: &ref.MerchantID, UserID: &userID, Category: "chat", Message: "chat closed", StatusCode: 200, Source: "web", IPAddress: c.ClientIP()})

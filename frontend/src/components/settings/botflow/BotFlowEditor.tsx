@@ -11,7 +11,7 @@ import { useAuth } from "@/context/AuthContext";
 import type { BotFlow, ConditionRule, ConditionSet, FlowDef, FlowNode, PassthroughConfig, TriggerDef } from "@/lib/automationTypes";
 import type { Merchant } from "@/lib/types";
 import { BotFlowCanvas } from "./BotFlowCanvas";
-import { STEP_TYPES, createNode, isTerminalType, newStepId, stepLabel, withAutoLayout } from "./stepTypes";
+import { STEP_TYPES, createNode, newStepId, stepLabel, validateFlowGraph, withAutoLayout } from "./stepTypes";
 
 // Always available to reference in a Condition step alongside "answer_<id>"
 // (a captured question answer) — computed by the engine itself, nothing
@@ -182,7 +182,6 @@ export function BotFlowEditor({ existing }: { existing?: BotFlow }) {
   }
 
   const questionSteps = steps.filter((s) => s.type === "ask_question");
-  const hasTerminal = steps.some((s) => isTerminalType(s.type));
   const selectedNode = steps.find((s) => s.id === selectedId) ?? null;
 
   async function save() {
@@ -204,8 +203,21 @@ export function BotFlowEditor({ existing }: { existing?: BotFlow }) {
         message.error("Pick a starting step — click a node and use \"Set as start\", or add-step auto-picks the first one.");
         return;
       }
-      if (!hasTerminal) {
-        message.error('End the flow with "Hand over to a real person" or "End the chat".');
+      const issues = validateFlowGraph(steps, entry);
+      if (issues.length > 0) {
+        Modal.error({
+          title: "This flow has unfinished paths",
+          width: 560,
+          content: (
+            <ul className="list-disc pl-5">
+              {issues.map((issue, i) => (
+                <li key={i} className="mt-1">
+                  {issue.message}
+                </li>
+              ))}
+            </ul>
+          ),
+        });
         return;
       }
     }

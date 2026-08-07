@@ -90,3 +90,57 @@ export function withAutoLayout(nodes: FlowNode[], entry: string): FlowNode[] {
 
   return nodes.map((n) => ({ ...n, position: n.position ?? positioned.get(n.id) ?? { x: 80, y: 80 } }));
 }
+
+export type FlowIssue = { nodeId: string; message: string };
+
+// Traces every path reachable from entry and flags any that dead-end
+// without reaching a terminal step (handoff_to_agent/close_chat) — the
+// exact shape of bug Bot Analytics uncovered live (a flow that just runs
+// off the end leaves the chat permanently stuck in 'bot' status). Also
+// flags a step that isn't connected to the start at all, since it will
+// simply never run. Ai_passthrough flows have no graph and are never
+// passed here.
+export function validateFlowGraph(steps: FlowNode[], entry: string): FlowIssue[] {
+  const issues: FlowIssue[] = [];
+  const byId = new Map(steps.map((s) => [s.id, s]));
+  const label = (s: FlowNode) => `"${stepLabel(s.type)}" (step ${steps.indexOf(s) + 1})`;
+  const visited = new Set<string>();
+  const queue: string[] = entry ? [entry] : [];
+
+  function checkTarget(node: FlowNode, target: string | undefined, branchName?: string) {
+    const suffix = branchName ? ` — the "${branchName}" branch` : "";
+    if (!target) {
+      issues.push({
+        nodeId: node.id,
+        message: `${label(node)}${suffix} doesn't continue to another step and isn't an ending — connect it onward, or end with "Hand over to a real person" / "End the chat".`,
+      });
+    } else if (!byId.has(target)) {
+      issues.push({ nodeId: node.id, message: `${label(node)}${suffix} points to a step that no longer exists.` });
+    } else {
+      queue.push(target);
+    }
+  }
+
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    if (visited.has(id)) continue;
+    visited.add(id);
+    const node = byId.get(id);
+    if (!node || isTerminalType(node.type)) continue;
+
+    if (node.type === "condition") {
+      checkTarget(node, node.branches?.true, "Yes");
+      checkTarget(node, node.branches?.false, "No");
+    } else {
+      checkTarget(node, node.next);
+    }
+  }
+
+  for (const s of steps) {
+    if (!visited.has(s.id)) {
+      issues.push({ nodeId: s.id, message: `${label(s)} isn't connected to the start — it will never run.` });
+    }
+  }
+
+  return issues;
+}

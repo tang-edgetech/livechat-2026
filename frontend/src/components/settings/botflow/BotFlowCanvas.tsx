@@ -16,12 +16,13 @@ import {
   type OnConnect,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { Tag } from "antd";
+import { Button, Tag } from "antd";
+import { DeleteOutlined, EditOutlined } from "@ant-design/icons";
 
 import type { FlowNode } from "@/lib/automationTypes";
 import { isTerminalType, stepIcon, stepLabel } from "./stepTypes";
 
-type StepNodeData = { flowNode: FlowNode; isEntry: boolean };
+type StepNodeData = { flowNode: FlowNode; isEntry: boolean; onEdit: (id: string) => void; onDelete: (id: string) => void };
 type StepNode = Node<StepNodeData, "step">;
 
 function preview(flowNode: FlowNode): string | null {
@@ -37,15 +38,36 @@ function preview(flowNode: FlowNode): string | null {
 }
 
 function StepNodeCard({ data, selected }: NodeProps<StepNode>) {
-  const { flowNode, isEntry } = data;
+  const { flowNode, isEntry, onEdit, onDelete } = data;
   const text = preview(flowNode);
 
   return (
     <div
-      className={`w-56 rounded-lg border bg-white px-3 py-2 shadow-sm dark:bg-neutral-900 ${
+      className={`group relative w-56 rounded-lg border bg-white px-3 py-2 shadow-sm dark:bg-neutral-900 ${
         selected ? "border-blue-500 ring-2 ring-blue-500/30" : "border-black/10 dark:border-white/10"
       }`}
     >
+      <div className="absolute -top-3 right-1 hidden gap-1 group-hover:flex">
+        <Button
+          size="small"
+          shape="circle"
+          icon={<EditOutlined />}
+          onClick={(e) => {
+            e.stopPropagation();
+            onEdit(flowNode.id);
+          }}
+        />
+        <Button
+          size="small"
+          shape="circle"
+          danger
+          icon={<DeleteOutlined />}
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete(flowNode.id);
+          }}
+        />
+      </div>
       <Handle type="target" position={Position.Top} style={{ background: "#999" }} />
       <div className="flex items-center gap-2">
         <span className="text-[15px]">{stepIcon(flowNode.type)}</span>
@@ -97,10 +119,10 @@ export function BotFlowCanvas({
         id: s.id,
         type: "step",
         position: s.position ?? { x: 80, y: 80 },
-        data: { flowNode: s, isEntry: s.id === entry },
+        data: { flowNode: s, isEntry: s.id === entry, onEdit: onSelect, onDelete: (id: string) => onDeleteNodes([id]) },
         selected: s.id === selectedId,
       })),
-    [steps, entry, selectedId],
+    [steps, entry, selectedId, onSelect, onDeleteNodes],
   );
 
   const edges: Edge[] = useMemo(() => {

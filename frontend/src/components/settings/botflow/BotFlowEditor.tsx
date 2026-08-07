@@ -381,8 +381,9 @@ export function BotFlowEditor({ existing }: { existing?: BotFlow }) {
             ) : (
               <>
                 <Typography.Paragraph type="secondary" style={{ marginBottom: 8, fontSize: 12.5 }}>
-                  Drag from a step&apos;s bottom dot to another step to connect them. Click a step to edit it on the
-                  right. Select and press Delete to remove a step or a connection.
+                  Drag from a step&apos;s bottom dot to another step to connect them. Click a step (or hover it and
+                  use the pencil icon) to edit it on the right; use the trash icon, or select and press Delete, to
+                  remove a step or a connection.
                 </Typography.Paragraph>
                 <BotFlowCanvas
                   steps={steps}
